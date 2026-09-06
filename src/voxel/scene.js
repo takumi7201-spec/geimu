@@ -17,7 +17,7 @@ import { classify, BIOMES } from '../world/biomes.js';
 import { fillDepressions, accumulateFlow } from '../world/hydrology.js';
 import { FAUNA } from '../world/fauna.js';
 import { B, VOX_M, groundOf, canopyOf, strataAt, SPECKLE, UNDERGROWTH } from './blocks.js';
-import { PLANT_BUILDERS, FAUNA_BUILDERS, HIDES, modelForGroup, modelSpan } from './models.js';
+import { PLANT_BUILDERS, modelForGroup } from './models.js';
 
 /** 水面なしを表す番兵 */
 export const WATER_NONE = -30000;
@@ -493,13 +493,8 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
     const kind = modelForGroup(sp.group);
     const flying = kind === 'pterosaur';
     const swimming = kind === 'plesiosaur';
-    const hide = HIDES[(rand() * HIDES.length) | 0];
-    const built = FAUNA_BUILDERS[kind](rngFromSeed(`${key}:fauna:${hcount}`), hide);
-    built.kind = kind;
-    models.push(built);
-    const mi = models.length - 1;
-    // 実寸（m）に合わせる。モデルの長さ × unit × 6m が全長になるよう縮める
-    const scale = clamp(sp.size / (modelSpan(built) * built.unit * VOX_M), 0.35, 3);
+    // 動物はボクセル模型ではなくドット絵の板で立てる。models には積まない
+    // （描画側が sprite キーでアトラスを引く。板の寸法は全長 size から出す）
     const count = 1 + ((rand() * (sp.size > 12 ? 2 : 4)) | 0);
     const hx = lo + ((rand() * propArea) | 0), hz = lo + ((rand() * propArea) | 0);
     for (let k = 0; k < count; k++) {
@@ -511,10 +506,10 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
       if (swimming && !wet) continue;
       if (!swimming && !flying && wet) continue;
       fauna.push({
-        m: mi, x, z,
+        sprite: kind, x, z,
         y: flying ? Math.max(hb, wl === WATER_NONE ? hb : wl) + 8 + ((rand() * 14) | 0) : (wet ? wl : hb) + 1,
         yaw: rand() * Math.PI * 2,
-        name: sp.name, latin: sp.latin, group: sp.group, size: sp.size, scale,
+        name: sp.name, latin: sp.latin, group: sp.group, size: sp.size,
       });
     }
   }

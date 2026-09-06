@@ -210,6 +210,8 @@ src/
 
 tools/serve.mjs          依存なしの静的サーバ（npm start）
 tools/bundle.mjs         単一 HTML への畳み込み（npm run bundle）
+tools/sprites.mjs        動物のドット絵の取り込み（npm run sprites）
+assets/fauna/*.png       動物のドット絵（種別ごと 1 枚）
 tools/render.mjs         CLI レンダラ（PNG 書き出し）
 tools/export-scene.mjs   区画の書き出し（JSON / 高さマップ / 地表色）
 tools/make-icons.mjs     アプリアイコン生成

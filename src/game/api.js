@@ -199,7 +199,7 @@ export function serializeScene(scene, opts = {}) {
     })),
     props: scene.props.map((p) => [p.m, p.x, p.y, p.z, p.rot]),
     fauna: scene.fauna.map((f) => ({
-      model: f.m, x: f.x, y: f.y, z: f.z, yaw: f.yaw, scale: f.scale,
+      sprite: f.sprite, x: f.x, y: f.y, z: f.z, yaw: f.yaw,
       name: f.name, latin: f.latin, group: f.group, sizeM: f.size,
     })),
   };

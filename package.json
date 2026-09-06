@@ -11,6 +11,7 @@
     "render": "node tools/render.mjs",
     "export": "node tools/export-scene.mjs",
     "icons": "node tools/make-icons.mjs",
+    "sprites": "node tools/sprites.mjs",
     "test": "node tools/verify.mjs"
   },
   "engines": {

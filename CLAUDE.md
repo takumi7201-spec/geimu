@@ -17,6 +17,7 @@ ES モジュールのみ。生成器はブラウザ API に依存させず、Nod
 ```bash
 npm start                                   # http://localhost:8080（Node だけで配信）
 npm run bundle                              # dist/mesozoic-atlas.html（file:// で動く 1 枚版）
+npm run sprites                             # assets/fauna/*.png → src/voxel/sprites.js
 npm test                                    # 生成器・区画・当たり判定の検証
 node tools/render.mjs --all --size small --out /tmp/x   # PNG 書き出し
 node tools/render.mjs --ma 195 --size small --out /tmp/x  # 紀と紀のあいだの年代
@@ -107,6 +108,19 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
     `fetch` によるアセット読み込み、外部 CSS。生成器はどれも使っていないので
     1 枚に畳める。この前提を崩す変更を入れるときは `npm run bundle` の結果を
     file:// で開いて確かめること。
+
+19. **動物はドット絵の板。ボクセル模型ではない。** `assets/fauna/<種別>.png` を
+    `npm run sprites` で `src/voxel/sprites.js` に畳み、描画側は Y 軸まわりだけ
+    カメラへ向く板として立てる（`SPRITE_VS`）。完全なビルボードにすると見上げた
+    ときに絵が寝て、地面から生えたように見える。抜きは `discard` で捨てる
+    ―― 半透明で混ぜると板の矩形が深度に残り、後ろの地形が四角く欠ける。
+    ファイル名がそのまま種別キーで、`modelForGroup()` が返す 5 つ
+    （theropod / sauropod / ornithischian / pterosaur / plesiosaur）に対応する。
+
+20. **板が見えないときは、まず大きさを疑う前に深度と抜きを分けて見る。** 実寸では
+    6m の獣脚類は 1 ブロックしかなく、20〜30m の木立の中では数ピクセルにしかならない。
+    描けていないのか埋もれているのかは、フラグメントを単色にして（頂点の当たり）、
+    次に UV を色に出して（テクスチャの当たり）、最後に板を数十倍にして切り分ける。
 
 ## 健全性の目安
 

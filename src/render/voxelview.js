@@ -17,8 +17,9 @@
 
 import * as M from './glmat.js';
 import { clamp } from '../core/rng.js';
-import { BLOCK_COLORS, BLOCK_GLOW, B } from '../voxel/blocks.js';
+import { BLOCK_COLORS, BLOCK_GLOW, B, VOX_M } from '../voxel/blocks.js';
 import { WATER_NONE, strataFor } from '../voxel/scene.js';
+import { sprite } from '../voxel/sprites.js';
 
 const SOLID_VS = `
 attribute vec3 aPos;
@@ -71,6 +72,43 @@ varying float vDist;
 void main() {
   float f = smoothstep(uFogRange.x, uFogRange.y, vDist);
   gl_FragColor = vec4(mix(vColor.rgb, uFog, f), vColor.a * (1.0 - f * 0.6));
+}`;
+
+// 動物はドット絵の板で立てる。Y 軸まわりだけカメラへ向け、上方向は世界の上に固定する
+// （完全なビルボードにすると見上げたとき絵が寝てしまい、地面から生えたように見える）。
+const SPRITE_VS = `
+attribute vec3 aCenter;
+attribute vec2 aCorner;
+attribute vec2 aUV;
+uniform mat4 uMVP;
+uniform vec3 uCam;
+varying vec2 vUV;
+varying float vDist;
+void main() {
+  vec2 to = aCenter.xz - uCam.xz;
+  float len = length(to);
+  // 真上から覗いたときは向きが決まらないので、そのときだけ X 軸で代用する
+  vec2 right = len > 0.001 ? vec2(-to.y, to.x) / len : vec2(1.0, 0.0);
+  vec3 p = vec3(aCenter.x + right.x * aCorner.x, aCenter.y + aCorner.y, aCenter.z + right.y * aCorner.x);
+  vUV = aUV;
+  vDist = length(p - uCam);
+  gl_Position = uMVP * vec4(p, 1.0);
+}`;
+
+const SPRITE_FS = `
+precision mediump float;
+uniform sampler2D uTex;
+uniform vec3 uFog;
+uniform vec2 uFogRange;
+varying vec2 vUV;
+varying float vDist;
+void main() {
+  vec4 c = texture2D(uTex, vUV);
+  // ドット絵の抜きは捨てる。半透明で混ぜると板の矩形が深度に残り、
+  // 後ろの地形が四角く欠ける
+  if (c.a < 0.5) discard;
+  float f = smoothstep(uFogRange.x, uFogRange.y, vDist) * 0.82;
+  gl_FragColor = vec4(mix(c.rgb, uFog, f), 1.0);
 }`;
 
 const SKY_VS = `
@@ -212,6 +250,7 @@ export class VoxelRenderer {
       this.progSolid = program(gl, SOLID_VS, SOLID_FS);
       this.progWater = program(gl, WATER_VS, WATER_FS);
       this.progSky = program(gl, SKY_VS, SKY_FS);
+      this.progSprite = program(gl, SPRITE_VS, SPRITE_FS);
     } catch (e) { this.error = e.message; return; }
     this.skyBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.skyBuf);
@@ -257,7 +296,7 @@ export class VoxelRenderer {
     const water = new MeshBuilder(1 << 15);
     this._buildTerrain(solid, water);
     if (this.layers.plants) this._buildProps(solid, s.props, s.models, false);
-    if (this.layers.fauna) this._buildProps(solid, s.fauna, s.models, true);
+    this._buildSprites();          // 動物は板なので solid のメッシュには混ぜない
 
     const upload = (mb) => {
       const vb = gl.createBuffer();
@@ -466,6 +505,68 @@ export class VoxelRenderer {
     }
   }
 
+  /**
+   * 動物の板。1 体 = 2 三角形で、回転は頂点ではなくシェーダが持つ。
+   * 絵を替えても頂点は変わらないので、アップロードは区画ごとに一度で済む。
+   */
+  _buildSprites() {
+    const gl = this.gl, s = this.scene;
+    if (this.spriteMesh) { gl.deleteBuffer(this.spriteMesh.vb); this.spriteMesh = null; }
+    const list = this.layers.fauna ? s.fauna.filter((f) => f.sprite && sprite(f.sprite)) : [];
+    if (!list.length) return;
+
+    // 使う絵だけを横に並べて 1 枚に。体ごとにテクスチャを持ち替えずに済む
+    const keys = [...new Set(list.map((f) => f.sprite))];
+    const slot = {};
+    let AW = 0, AH = 0;
+    for (const k of keys) {
+      const sp = sprite(k);
+      slot[k] = { x: AW, w: sp.w, h: sp.h };
+      AW += sp.w; AH = Math.max(AH, sp.h);
+    }
+    const atlas = new Uint8Array(AW * AH * 4);
+    for (const k of keys) {
+      const sp = sprite(k), o = slot[k];
+      for (let y = 0; y < sp.h; y++) {
+        for (let x = 0; x < sp.w; x++) {
+          const si = (y * sp.w + x) * 4, di = (y * AW + o.x + x) * 4;
+          atlas[di] = sp.data[si]; atlas[di + 1] = sp.data[si + 1];
+          atlas[di + 2] = sp.data[si + 2]; atlas[di + 3] = sp.data[si + 3];
+        }
+      }
+    }
+    if (!this.spriteTex) this.spriteTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, AW, AH, 0, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
+    // ドット絵なので最近傍で拡大する。線形だと輪郭がにじんで別の絵になる
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    const F = new Float32Array(list.length * 6 * 7);
+    let o = 0;
+    for (const f of list) {
+      const sp = sprite(f.sprite), st = slot[f.sprite];
+      // 絵の横幅がその種の全長。高さは絵の縦横比に従う（1 ブロック = 6m）
+      const wB = Math.max(0.25, f.size / VOX_M);
+      const hB = wB * (sp.h / sp.w), hw = wB / 2;
+      const u0 = st.x / AW, u1 = (st.x + sp.w) / AW;
+      const v1 = sp.h / AH;                       // 絵の上端が v=0、下端が v1
+      const cx = f.x + 0.5, cy = f.y, cz = f.z + 0.5;
+      const put = (dx, dy, u, v) => {
+        F[o++] = cx; F[o++] = cy; F[o++] = cz;
+        F[o++] = dx; F[o++] = dy; F[o++] = u; F[o++] = v;
+      };
+      put(-hw, 0, u0, v1); put(hw, 0, u1, v1); put(hw, hB, u1, 0);
+      put(-hw, 0, u0, v1); put(hw, hB, u1, 0); put(-hw, hB, u0, 0);
+    }
+    const vb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+    gl.bufferData(gl.ARRAY_BUFFER, F, gl.STATIC_DRAW);
+    this.spriteMesh = { vb, count: list.length * 6 };
+  }
+
   // ---- 視点 ------------------------------------------------------------
 
   rotate(dx, dy) {
@@ -639,7 +740,35 @@ export class VoxelRenderer {
     bind(this.progSolid, this.solid);
     gl.drawElements(gl.TRIANGLES, this.solid.count, gl.UNSIGNED_INT, 0);
 
-    // 3. 水面（半透明。深度は書かない — 戻し忘れると次のフレームが真っ黒になる）
+    // 3. 動物（ドット絵の板。抜きを discard するので不透明として扱える）
+    if (this.spriteMesh) {
+      const { p, loc } = this.progSprite;
+      gl.useProgram(p);
+      gl.disable(gl.CULL_FACE);          // 板は裏返らないが、回り込みで裏を向いても消さない
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteMesh.vb);
+      const S = 28;
+      gl.enableVertexAttribArray(loc.aCenter);
+      gl.vertexAttribPointer(loc.aCenter, 3, gl.FLOAT, false, S, 0);
+      gl.enableVertexAttribArray(loc.aCorner);
+      gl.vertexAttribPointer(loc.aCorner, 2, gl.FLOAT, false, S, 12);
+      gl.enableVertexAttribArray(loc.aUV);
+      gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, S, 20);
+      gl.uniformMatrix4fv(loc.uMVP, false, mvp);
+      gl.uniform3fv(loc.uCam, eye);
+      gl.uniform3fv(loc.uFog, fog);
+      gl.uniform2fv(loc.uFogRange, fogRange);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
+      gl.uniform1i(loc.uTex, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, this.spriteMesh.count);
+      // 次のパスは頂点の並びが違う。有効にした列を残すと、無い属性を読みに行く
+      gl.disableVertexAttribArray(loc.aCenter);
+      gl.disableVertexAttribArray(loc.aCorner);
+      gl.disableVertexAttribArray(loc.aUV);
+      gl.enable(gl.CULL_FACE);
+    }
+
+    // 4. 水面（半透明。深度は書かない — 戻し忘れると次のフレームが真っ黒になる）
     if (this.layers.water && this.water.count) {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -694,8 +823,8 @@ export class VoxelRenderer {
     for (const f of this.scene.fauna) {
       // 同じ種の名前を何度も出さない。群れの上に同じ札が並ぶと読めなくなる
       if (seenName.has(f.name) || drawn.length >= 6) continue;
-      const model = this.scene.models[f.m];
-      const top = f.y + 6 * model.unit * (f.scale || 1);
+      const sp = sprite(f.sprite);
+      const top = f.y + (sp ? (f.size / VOX_M) * (sp.h / sp.w) : 1);
       const p = this.project(f.x + 0.5, top, f.z + 0.5);
       if (!p || p.w > this.scene.total * 0.8) continue;
       const px = p.x * sx, py = p.y * sy;
