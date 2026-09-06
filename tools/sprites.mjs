@@ -11,34 +11,11 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodePNG } from './png.mjs';
+import { trimSprite } from '../src/voxel/spriteutil.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = resolve(ROOT, 'assets/fauna');
 const OUT = resolve(ROOT, 'src/voxel/sprites.js');
-
-/** 不透明な範囲まで刈り込む（足元と輪郭を絵のとおりに合わせるため） */
-function trim(img) {
-  let x0 = img.w, y0 = img.h, x1 = -1, y1 = -1;
-  for (let y = 0; y < img.h; y++) {
-    for (let x = 0; x < img.w; x++) {
-      if (img.data[(y * img.w + x) * 4 + 3] > 8) {
-        if (x < x0) x0 = x; if (x > x1) x1 = x;
-        if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
-    }
-  }
-  if (x1 < 0) throw new Error('全部が透明です');
-  const w = x1 - x0 + 1, h = y1 - y0 + 1;
-  const data = new Uint8Array(w * h * 4);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const s = ((y + y0) * img.w + (x + x0)) * 4, d = (y * w + x) * 4;
-      data[d] = img.data[s]; data[d+1] = img.data[s+1];
-      data[d+2] = img.data[s+2]; data[d+3] = img.data[s+3];
-    }
-  }
-  return { w, h, data };
-}
 
 export function buildSprites() {
   if (!existsSync(SRC_DIR)) throw new Error(`${SRC_DIR} がありません`);
@@ -48,7 +25,7 @@ export function buildSprites() {
   const entries = [];
   for (const f of files) {
     const key = basename(f, '.png').replace(/[^a-zA-Z0-9_]/g, '_');
-    const img = trim(decodePNG(readFileSync(resolve(SRC_DIR, f))));
+    const img = trimSprite(decodePNG(readFileSync(resolve(SRC_DIR, f))));
     let opaque = 0;
     for (let i = 3; i < img.data.length; i += 4) if (img.data[i] > 128) opaque++;
     entries.push({ key, ...img, opaque, file: f });
@@ -71,9 +48,23 @@ const RAW = {
 ${body}
 };
 
+// アプリから差し替えた絵。組み込みより優先する（端末に憶えさせるのは呼び出し側の仕事）
+const overrides = new Map();
+
+/** 差し替える。img に null を渡すと組み込みに戻る */
+export function setSprite(key, img) {
+  if (img) overrides.set(key, img); else overrides.delete(key);
+  cache.delete(key);
+}
+
+export function clearSprites() { overrides.clear(); cache.clear(); }
+export function isOverridden(key) { return overrides.has(key); }
+
 /** { w, h, data:RGBA } を返す。base64 の展開は初回だけ */
 const cache = new Map();
 export function sprite(key) {
+  const o = overrides.get(key);
+  if (o) return o;
   if (!cache.has(key)) {
     const r = RAW[key];
     if (!r) return null;
@@ -82,6 +73,7 @@ export function sprite(key) {
   return cache.get(key);
 }
 
+/** 組み込みの絵の名前（差し替えた分は含まない） */
 export const SPRITE_KEYS = Object.keys(RAW);
 `);
 

@@ -285,6 +285,49 @@ button.mini.wide { width: 100%; padding: 7px; }
 /* 指で操作する面。ブラウザ自身のスクロールとズームに取られないようにする */
 #map, #globe, #vox { touch-action: none; }
 
+/* ---- 動物の絵の差し替え ---- */
+#sprite-panel > summary {
+  cursor: pointer; list-style: none;
+  font: 600 11px/1 inherit; letter-spacing: .14em;
+  color: var(--muted); text-transform: none;
+  padding-bottom: 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
+}
+#sprite-panel > summary::-webkit-details-marker { display: none; }
+#sprite-panel > summary::after { content: ' ▾'; }
+#sprite-panel[open] > summary::after { content: ' ▴'; }
+.sprite-note { margin: 0 0 10px; }
+
+.sprite-slot {
+  display: grid; grid-template-columns: 44px 1fr auto;
+  align-items: center; gap: 9px; padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.sprite-slot canvas {
+  width: 44px; height: 44px; border-radius: 6px;
+  background: rgba(255,255,255,0.045);
+  image-rendering: pixelated;
+}
+.sprite-slot .who { min-width: 0; }
+.sprite-slot .who b { display: block; font-size: 12px; color: var(--text); font-weight: 600; }
+.sprite-slot .who em {
+  display: block; font-style: normal; font-size: 10px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sprite-slot button {
+  background: var(--panel); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 10px; font: 11px/1 inherit; cursor: pointer; white-space: nowrap;
+}
+.sprite-slot button.set { color: var(--accent-2); border-color: var(--accent-2); }
+#sprite-reset { margin-top: 10px; }
+
+@media (max-width: 860px) {
+  /* 指で押せる大きさに */
+  .sprite-slot { grid-template-columns: 52px 1fr auto; padding: 8px 0; }
+  .sprite-slot canvas { width: 52px; height: 52px; }
+  .sprite-slot button { padding: 11px 14px; font-size: 12px; }
+}
+
 </style>
 </head>
 <body>
@@ -360,6 +403,16 @@ button.mini.wide { width: 100%; padding: 7px; }
       <h2>表示</h2>
       <div class="modes" id="modes"></div>
       <div class="toggles" id="toggles"></div>
+    </section>
+
+    <section class="panel">
+      <details id="sprite-panel">
+        <summary>動物の絵</summary>
+        <p class="hint sprite-note">分類ごとに PNG を選ぶと、その場で差し替わります。
+          透明の余白は自動で刈るので、位置合わせは要りません。選んだ絵はこの端末が憶えます。</p>
+        <div id="sprite-slots"></div>
+        <button id="sprite-reset" class="mini wide">ぜんぶ組み込みに戻す</button>
+      </details>
     </section>
 
     <section class="panel">
@@ -3413,7 +3466,7 @@ return { VOX_M, BLOCKS, B, BLOCK_COLORS, BLOCK_GLOW, SPECKLE, UNDERGROWTH, strat
 })();
 
 // ===== src/voxel/models.js =====
-const { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SWIM_SPRITES, FLY_SPRITES, SPRITE_FALLBACK, HIDES, modelSpan } = await (async () => {
+const { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SPRITE_GROUPS, SWIM_SPRITES, FLY_SPRITES, SPRITE_FALLBACK, HIDES, modelSpan } = await (async () => {
 /**
  * ボクセルモデル（植物・動物・岩）。
  *
@@ -3759,6 +3812,20 @@ function spriteForGroup(group) {
   return 'theropod';
 }
 
+/** 絵を割り当てる 10 分類。並び順がそのまま設定画面の並びになる */
+const SPRITE_GROUPS = [
+  { key: 'theropod', label: '獣脚類', note: 'アロサウルス・ティラノサウルス' },
+  { key: 'sauropod', label: '竜脚類', note: 'ディプロドクス・ブラキオサウルス' },
+  { key: 'ornithopod', label: '鳥脚類', note: 'イグアノドン・ハドロサウルス' },
+  { key: 'ceratopsian', label: '角竜', note: 'トリケラトプス' },
+  { key: 'stegosaur', label: '剣竜', note: 'ステゴサウルス' },
+  { key: 'ankylosaur', label: '曲竜', note: 'アンキロサウルス' },
+  { key: 'pterosaur', label: '翼竜', note: 'プテラノドン・ランフォリンクス' },
+  { key: 'plesiosaur', label: '首長竜', note: 'エラスモサウルス・モササウルス' },
+  { key: 'ichthyosaur', label: '魚竜', note: 'イクチオサウルス・アンモナイト' },
+  { key: 'synapsid', label: '獣弓類ほか', note: 'キノドン・分椎目' },
+];
+
 /** 水の中で暮らす種別。陸に打ち上げないための判定に使う */
 const SWIM_SPRITES = new Set(['plesiosaur', 'ichthyosaur']);
 /** 空を行く種別 */
@@ -3785,7 +3852,7 @@ function modelSpan(m) {
   for (const b of m.boxes) { lo = Math.min(lo, b.x); hi = Math.max(hi, b.x + b.w); }
   return Math.max(1, hi - lo);
 }
-return { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SWIM_SPRITES, FLY_SPRITES, SPRITE_FALLBACK, HIDES, modelSpan };
+return { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SPRITE_GROUPS, SWIM_SPRITES, FLY_SPRITES, SPRITE_FALLBACK, HIDES, modelSpan };
 })();
 
 // ===== src/voxel/scene.js =====
@@ -4343,7 +4410,7 @@ return { WATER_NONE, SCENE_SIZES, pickScenicSpot, buildVoxelScene, strataFor };
 })();
 
 // ===== src/voxel/sprites.js =====
-const { sprite, SPRITE_KEYS } = await (async () => {
+const { setSprite, clearSprites, isOverridden, sprite, SPRITE_KEYS } = await (async () => {
 /**
  * 動物のドット絵（tools/sprites.mjs が assets/fauna/*.png から作る。手で編集しない）。
  * rgba は base64 の RGBA8。透明の余白は刈り済みなので、板の高さ＝絵の高さでよい。
@@ -4361,9 +4428,23 @@ const RAW = {
   theropod: { w: 16, h: 7, rgba: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzVpL/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIB0W/+AdFv/gHRb/4B0W/+AdFv/gHRb/4B0W/+AdFv/gHRb/4B0W/+AdFv/gHRb/wAAAAB7b1f/e29X/3tvV/97b1f/e29X/3tvV/97b1f/e29X/3tvV/97b1f/e29X/3tvV/97b1f/e29X/3tvV/+8U0X/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1alP/dWpT/wAAAAB1alP/dWpT/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcGVP/3BlT/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGtgTP9rYEz/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABmXEj/ZlxI/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==' },
 };
 
+// アプリから差し替えた絵。組み込みより優先する（端末に憶えさせるのは呼び出し側の仕事）
+const overrides = new Map();
+
+/** 差し替える。img に null を渡すと組み込みに戻る */
+function setSprite(key, img) {
+  if (img) overrides.set(key, img); else overrides.delete(key);
+  cache.delete(key);
+}
+
+function clearSprites() { overrides.clear(); cache.clear(); }
+function isOverridden(key) { return overrides.has(key); }
+
 /** { w, h, data:RGBA } を返す。base64 の展開は初回だけ */
 const cache = new Map();
 function sprite(key) {
+  const o = overrides.get(key);
+  if (o) return o;
   if (!cache.has(key)) {
     const r = RAW[key];
     if (!r) return null;
@@ -4372,8 +4453,9 @@ function sprite(key) {
   return cache.get(key);
 }
 
+/** 組み込みの絵の名前（差し替えた分は含まない） */
 const SPRITE_KEYS = Object.keys(RAW);
-return { sprite, SPRITE_KEYS };
+return { setSprite, clearSprites, isOverridden, sprite, SPRITE_KEYS };
 })();
 
 // ===== src/render/voxelview.js =====
@@ -4962,6 +5044,12 @@ class VoxelRenderer {
     this.spriteMesh = { vb, count: list.length * 6 };
   }
 
+  /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
+  refreshSprites() {
+    if (!this.ok || !this.scene) return;
+    this._buildSprites();
+  }
+
   // ---- 視点 ------------------------------------------------------------
 
   rotate(dx, dy) {
@@ -5241,6 +5329,54 @@ class VoxelRenderer {
   }
 }
 return { VoxelRenderer };
+})();
+
+// ===== src/voxel/spriteutil.js =====
+const { trimSprite, checkSprite } = await (async () => {
+/**
+ * ドット絵スプライトの下ごしらえ。取り込みツール（Node）と
+ * アプリの絵の差し替え（ブラウザ）で同じ結果になるよう、ここに置いて共有する。
+ */
+
+/**
+ * 透明な余白を刈る。刈らないと板の足元が浮き、群れが宙に並ぶ。
+ * @param {{w:number,h:number,data:Uint8Array|Uint8ClampedArray}} img
+ */
+function trimSprite(img) {
+  let x0 = img.w, y0 = img.h, x1 = -1, y1 = -1;
+  for (let y = 0; y < img.h; y++) {
+    for (let x = 0; x < img.w; x++) {
+      if (img.data[(y * img.w + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 < 0) throw new Error('全部が透明です');
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const s = ((y + y0) * img.w + (x + x0)) * 4, d = (y * w + x) * 4;
+      data[d] = img.data[s]; data[d + 1] = img.data[s + 1];
+      data[d + 2] = img.data[s + 2]; data[d + 3] = img.data[s + 3];
+    }
+  }
+  return { w, h, data };
+}
+
+/** 板に使える絵か検める。大きすぎる絵は端末の記憶領域を食うだけで見た目は変わらない */
+function checkSprite(img, max = 192) {
+  if (!img || !img.w || !img.h) return '絵を読めませんでした';
+  if (img.w > max || img.h > max) return `大きすぎます（${img.w}×${img.h}／${max} まで）`;
+  let opaque = 0;
+  for (let i = 3; i < img.data.length; i += 4) if (img.data[i] > 128) opaque++;
+  if (opaque < 4) return '中身がほとんど透明です';
+  return null;
+}
+return { trimSprite, checkSprite };
 })();
 
 // ===== src/game/physics.js =====
@@ -5776,6 +5912,9 @@ return { SCENE_FORMAT, createGameWorld, enterScene, findSpawn, sampleColumn, fau
 // ===== src/main.js =====
 await (async () => {
 /** アプリ本体：UI と生成器・2D 描画・3D 地球儀の接続 */
+
+
+
 
 
 
@@ -7006,6 +7145,152 @@ enablePinch(canvas, (f, mx, my) => {
 });
 enablePinch(globeCanvas, (f) => { if (globe && globe.ok) globe.zoom(f); });
 enablePinch(voxCanvas, (f) => { if (vox && vox.ok && !state.explore) vox.zoom(f); });
+
+// ---------- 動物の絵の差し替え ------------------------------------------
+// PNG を選ぶと、その場で板の絵が変わる。file:// でも読めるよう、
+// 画像は data: URL 経由で canvas に描く（ファイルを直に描くと汚染されて読めない）。
+
+const SPR_STORE = 'mz.spr.';
+
+function b64FromBytes(u8) {
+  let s = '';
+  const CH = 0x8000;   // 一度に渡しすぎると引数の上限で落ちる
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode(...u8.subarray(i, i + CH));
+  return btoa(s);
+}
+
+function bytesFromB64(b64) {
+  const bin = atob(b64);
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+
+function saveSprite(key, img) {
+  try {
+    localStorage.setItem(SPR_STORE + key,
+      JSON.stringify({ w: img.w, h: img.h, d: b64FromBytes(img.data) }));
+  } catch { /* 憶えられなくても、その場では使える */ }
+}
+
+/** 起動時に、前に選んだ絵を戻す */
+function loadSavedSprites() {
+  for (const g of SPRITE_GROUPS) {
+    try {
+      const raw = localStorage.getItem(SPR_STORE + g.key);
+      if (!raw) continue;
+      const o = JSON.parse(raw);
+      setSprite(g.key, { w: o.w, h: o.h, data: bytesFromB64(o.d) });
+    } catch { /* 壊れていたら組み込みの絵で動かす */ }
+  }
+}
+
+/** ファイルを RGBA に開いて、余白を刈る */
+async function readSpriteFile(file) {
+  const url = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('ファイルを読めません'));
+    r.readAsDataURL(file);
+  });
+  const im = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('画像として開けません'));
+    i.src = url;
+  });
+  const cv = document.createElement('canvas');
+  cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingEnabled = false;
+  g.drawImage(im, 0, 0);
+  const d = g.getImageData(0, 0, cv.width, cv.height);
+  return trimSprite({ w: cv.width, h: cv.height, data: d.data });
+}
+
+/** 差し替え後に絵を出し直す。地形は変わらないので板だけ作り直す */
+function afterSpriteChange() {
+  buildSpriteSlots();
+  if (vox && vox.ok && state.voxScene) { vox.refreshSprites(); draw(); }
+}
+
+function pickSpriteFor(key) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/png,image/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      const img = await readSpriteFile(f);
+      const bad = checkSprite(img);
+      if (bad) { alert(bad); return; }
+      setSprite(key, img);
+      saveSprite(key, img);
+      afterSpriteChange();
+    } catch (err) {
+      alert('絵を読めませんでした：' + err.message);
+    }
+  };
+  inp.click();
+}
+
+/** その分類がいま何で描かれているか（差し替え → 組み込み → 代用 の順） */
+function shownSprite(key) {
+  return sprite(key) || sprite(SPRITE_FALLBACK[key]) || null;
+}
+
+function drawSpriteThumb(cv, key) {
+  const g = cv.getContext('2d');
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  cv.width = 44 * dpr; cv.height = 44 * dpr;
+  g.clearRect(0, 0, cv.width, cv.height);
+  const sp = shownSprite(key);
+  if (!sp) return;
+  // ImageData は拡大して描けないので、原寸の canvas を経由する
+  const tmp = document.createElement('canvas');
+  tmp.width = sp.w; tmp.height = sp.h;
+  const id = tmp.getContext('2d').createImageData(sp.w, sp.h);
+  id.data.set(sp.data);
+  tmp.getContext('2d').putImageData(id, 0, 0);
+  g.imageSmoothingEnabled = false;
+  const k = Math.min(cv.width / sp.w, cv.height / sp.h) * 0.86;
+  const w = sp.w * k, h = sp.h * k;
+  g.drawImage(tmp, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
+}
+
+function buildSpriteSlots() {
+  const box = $('#sprite-slots');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const g of SPRITE_GROUPS) {
+    const row = document.createElement('div');
+    row.className = 'sprite-slot';
+    const cv = document.createElement('canvas');
+    drawSpriteThumb(cv, g.key);
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.innerHTML = `<b>${g.label}</b><em>${g.note}</em>`;
+    const btn = document.createElement('button');
+    const mine = isOverridden(g.key);
+    btn.textContent = mine ? '選び直す' : '絵を選ぶ';
+    btn.className = mine ? 'set' : '';
+    btn.onclick = () => pickSpriteFor(g.key);
+    row.append(cv, who, btn);
+    box.appendChild(row);
+  }
+}
+
+$('#sprite-reset').addEventListener('click', () => {
+  for (const g of SPRITE_GROUPS) {
+    try { localStorage.removeItem(SPR_STORE + g.key); } catch { /* 消せなくても戻す */ }
+  }
+  clearSprites();
+  afterSpriteChange();
+});
+
+loadSavedSprites();
+buildSpriteSlots();
 })();
 
 </script>

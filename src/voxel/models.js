@@ -344,6 +344,20 @@ export function spriteForGroup(group) {
   return 'theropod';
 }
 
+/** 絵を割り当てる 10 分類。並び順がそのまま設定画面の並びになる */
+export const SPRITE_GROUPS = [
+  { key: 'theropod', label: '獣脚類', note: 'アロサウルス・ティラノサウルス' },
+  { key: 'sauropod', label: '竜脚類', note: 'ディプロドクス・ブラキオサウルス' },
+  { key: 'ornithopod', label: '鳥脚類', note: 'イグアノドン・ハドロサウルス' },
+  { key: 'ceratopsian', label: '角竜', note: 'トリケラトプス' },
+  { key: 'stegosaur', label: '剣竜', note: 'ステゴサウルス' },
+  { key: 'ankylosaur', label: '曲竜', note: 'アンキロサウルス' },
+  { key: 'pterosaur', label: '翼竜', note: 'プテラノドン・ランフォリンクス' },
+  { key: 'plesiosaur', label: '首長竜', note: 'エラスモサウルス・モササウルス' },
+  { key: 'ichthyosaur', label: '魚竜', note: 'イクチオサウルス・アンモナイト' },
+  { key: 'synapsid', label: '獣弓類ほか', note: 'キノドン・分椎目' },
+];
+
 /** 水の中で暮らす種別。陸に打ち上げないための判定に使う */
 export const SWIM_SPRITES = new Set(['plesiosaur', 'ichthyosaur']);
 /** 空を行く種別 */

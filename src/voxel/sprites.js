@@ -15,9 +15,23 @@ const RAW = {
   theropod: { w: 16, h: 7, rgba: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzVpL/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIB0W/+AdFv/gHRb/4B0W/+AdFv/gHRb/4B0W/+AdFv/gHRb/4B0W/+AdFv/gHRb/wAAAAB7b1f/e29X/3tvV/97b1f/e29X/3tvV/97b1f/e29X/3tvV/97b1f/e29X/3tvV/97b1f/e29X/3tvV/+8U0X/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1alP/dWpT/wAAAAB1alP/dWpT/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcGVP/3BlT/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGtgTP9rYEz/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABmXEj/ZlxI/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==' },
 };
 
+// アプリから差し替えた絵。組み込みより優先する（端末に憶えさせるのは呼び出し側の仕事）
+const overrides = new Map();
+
+/** 差し替える。img に null を渡すと組み込みに戻る */
+export function setSprite(key, img) {
+  if (img) overrides.set(key, img); else overrides.delete(key);
+  cache.delete(key);
+}
+
+export function clearSprites() { overrides.clear(); cache.clear(); }
+export function isOverridden(key) { return overrides.has(key); }
+
 /** { w, h, data:RGBA } を返す。base64 の展開は初回だけ */
 const cache = new Map();
 export function sprite(key) {
+  const o = overrides.get(key);
+  if (o) return o;
   if (!cache.has(key)) {
     const r = RAW[key];
     if (!r) return null;
@@ -26,4 +40,5 @@ export function sprite(key) {
   return cache.get(key);
 }
 
+/** 組み込みの絵の名前（差し替えた分は含まない） */
 export const SPRITE_KEYS = Object.keys(RAW);

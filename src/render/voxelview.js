@@ -582,6 +582,12 @@ export class VoxelRenderer {
     this.spriteMesh = { vb, count: list.length * 6 };
   }
 
+  /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
+  refreshSprites() {
+    if (!this.ok || !this.scene) return;
+    this._buildSprites();
+  }
+
   // ---- 視点 ------------------------------------------------------------
 
   rotate(dx, dy) {

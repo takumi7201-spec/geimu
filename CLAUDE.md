@@ -136,6 +136,13 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
     `Explorer.key()` を叩くだけにしてある。別経路を作ると、押しっぱなしの解除と
     飛行の切り替えを二重に持つことになり、必ず片方が抜ける。
 
+24. **file:// で画像を canvas に描くときは data: URL を通す。** ファイルを直に
+    `<img src>` に入れて描くと canvas が汚染され、`getImageData` が例外になる。
+    FileReader で data: URL にしてから描けば読み出せる。絵の差し替えはこの道。
+
+25. **絵の差し替えは板だけ作り直す（`refreshSprites`）。** 地形は変わっていないのに
+    区画ごと組み直すと、数百万の柱を無駄に積み直して数秒固まる。
+
 ## 健全性の目安
 
 - 陸地率：三畳紀 30±4% / ジュラ紀 27±4% / 白亜紀 20±4%

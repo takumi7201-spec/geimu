@@ -271,3 +271,46 @@ button.mini.wide { width: 100%; padding: 7px; }
 
 /* 指で操作する面。ブラウザ自身のスクロールとズームに取られないようにする */
 #map, #globe, #vox { touch-action: none; }
+
+/* ---- 動物の絵の差し替え ---- */
+#sprite-panel > summary {
+  cursor: pointer; list-style: none;
+  font: 600 11px/1 inherit; letter-spacing: .14em;
+  color: var(--muted); text-transform: none;
+  padding-bottom: 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
+}
+#sprite-panel > summary::-webkit-details-marker { display: none; }
+#sprite-panel > summary::after { content: ' ▾'; }
+#sprite-panel[open] > summary::after { content: ' ▴'; }
+.sprite-note { margin: 0 0 10px; }
+
+.sprite-slot {
+  display: grid; grid-template-columns: 44px 1fr auto;
+  align-items: center; gap: 9px; padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.sprite-slot canvas {
+  width: 44px; height: 44px; border-radius: 6px;
+  background: rgba(255,255,255,0.045);
+  image-rendering: pixelated;
+}
+.sprite-slot .who { min-width: 0; }
+.sprite-slot .who b { display: block; font-size: 12px; color: var(--text); font-weight: 600; }
+.sprite-slot .who em {
+  display: block; font-style: normal; font-size: 10px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sprite-slot button {
+  background: var(--panel); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 10px; font: 11px/1 inherit; cursor: pointer; white-space: nowrap;
+}
+.sprite-slot button.set { color: var(--accent-2); border-color: var(--accent-2); }
+#sprite-reset { margin-top: 10px; }
+
+@media (max-width: 860px) {
+  /* 指で押せる大きさに */
+  .sprite-slot { grid-template-columns: 52px 1fr auto; padding: 8px 0; }
+  .sprite-slot canvas { width: 52px; height: 52px; }
+  .sprite-slot button { padding: 11px 14px; font-size: 12px; }
+}

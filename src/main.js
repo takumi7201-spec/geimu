@@ -11,6 +11,9 @@ import { GlobeRenderer } from './render/globe.js';
 import { VoxelRenderer } from './render/voxelview.js';
 import { buildVoxelScene, pickScenicSpot, SCENE_SIZES, WATER_NONE } from './voxel/scene.js';
 import { BLOCKS, VOX_M } from './voxel/blocks.js';
+import { SPRITE_GROUPS, SPRITE_FALLBACK } from './voxel/models.js';
+import { sprite, setSprite, isOverridden, clearSprites } from './voxel/sprites.js';
+import { trimSprite, checkSprite } from './voxel/spriteutil.js';
 import { Explorer } from './game/player.js';
 import { findSpawn, sampleColumn, faunaNear } from './game/api.js';
 import { mulberry32, clamp } from './core/rng.js';
@@ -1230,3 +1233,149 @@ enablePinch(canvas, (f, mx, my) => {
 });
 enablePinch(globeCanvas, (f) => { if (globe && globe.ok) globe.zoom(f); });
 enablePinch(voxCanvas, (f) => { if (vox && vox.ok && !state.explore) vox.zoom(f); });
+
+// ---------- 動物の絵の差し替え ------------------------------------------
+// PNG を選ぶと、その場で板の絵が変わる。file:// でも読めるよう、
+// 画像は data: URL 経由で canvas に描く（ファイルを直に描くと汚染されて読めない）。
+
+const SPR_STORE = 'mz.spr.';
+
+function b64FromBytes(u8) {
+  let s = '';
+  const CH = 0x8000;   // 一度に渡しすぎると引数の上限で落ちる
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode(...u8.subarray(i, i + CH));
+  return btoa(s);
+}
+
+function bytesFromB64(b64) {
+  const bin = atob(b64);
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+
+function saveSprite(key, img) {
+  try {
+    localStorage.setItem(SPR_STORE + key,
+      JSON.stringify({ w: img.w, h: img.h, d: b64FromBytes(img.data) }));
+  } catch { /* 憶えられなくても、その場では使える */ }
+}
+
+/** 起動時に、前に選んだ絵を戻す */
+function loadSavedSprites() {
+  for (const g of SPRITE_GROUPS) {
+    try {
+      const raw = localStorage.getItem(SPR_STORE + g.key);
+      if (!raw) continue;
+      const o = JSON.parse(raw);
+      setSprite(g.key, { w: o.w, h: o.h, data: bytesFromB64(o.d) });
+    } catch { /* 壊れていたら組み込みの絵で動かす */ }
+  }
+}
+
+/** ファイルを RGBA に開いて、余白を刈る */
+async function readSpriteFile(file) {
+  const url = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('ファイルを読めません'));
+    r.readAsDataURL(file);
+  });
+  const im = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('画像として開けません'));
+    i.src = url;
+  });
+  const cv = document.createElement('canvas');
+  cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingEnabled = false;
+  g.drawImage(im, 0, 0);
+  const d = g.getImageData(0, 0, cv.width, cv.height);
+  return trimSprite({ w: cv.width, h: cv.height, data: d.data });
+}
+
+/** 差し替え後に絵を出し直す。地形は変わらないので板だけ作り直す */
+function afterSpriteChange() {
+  buildSpriteSlots();
+  if (vox && vox.ok && state.voxScene) { vox.refreshSprites(); draw(); }
+}
+
+function pickSpriteFor(key) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/png,image/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      const img = await readSpriteFile(f);
+      const bad = checkSprite(img);
+      if (bad) { alert(bad); return; }
+      setSprite(key, img);
+      saveSprite(key, img);
+      afterSpriteChange();
+    } catch (err) {
+      alert('絵を読めませんでした：' + err.message);
+    }
+  };
+  inp.click();
+}
+
+/** その分類がいま何で描かれているか（差し替え → 組み込み → 代用 の順） */
+function shownSprite(key) {
+  return sprite(key) || sprite(SPRITE_FALLBACK[key]) || null;
+}
+
+function drawSpriteThumb(cv, key) {
+  const g = cv.getContext('2d');
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  cv.width = 44 * dpr; cv.height = 44 * dpr;
+  g.clearRect(0, 0, cv.width, cv.height);
+  const sp = shownSprite(key);
+  if (!sp) return;
+  // ImageData は拡大して描けないので、原寸の canvas を経由する
+  const tmp = document.createElement('canvas');
+  tmp.width = sp.w; tmp.height = sp.h;
+  const id = tmp.getContext('2d').createImageData(sp.w, sp.h);
+  id.data.set(sp.data);
+  tmp.getContext('2d').putImageData(id, 0, 0);
+  g.imageSmoothingEnabled = false;
+  const k = Math.min(cv.width / sp.w, cv.height / sp.h) * 0.86;
+  const w = sp.w * k, h = sp.h * k;
+  g.drawImage(tmp, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
+}
+
+function buildSpriteSlots() {
+  const box = $('#sprite-slots');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const g of SPRITE_GROUPS) {
+    const row = document.createElement('div');
+    row.className = 'sprite-slot';
+    const cv = document.createElement('canvas');
+    drawSpriteThumb(cv, g.key);
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.innerHTML = `<b>${g.label}</b><em>${g.note}</em>`;
+    const btn = document.createElement('button');
+    const mine = isOverridden(g.key);
+    btn.textContent = mine ? '選び直す' : '絵を選ぶ';
+    btn.className = mine ? 'set' : '';
+    btn.onclick = () => pickSpriteFor(g.key);
+    row.append(cv, who, btn);
+    box.appendChild(row);
+  }
+}
+
+$('#sprite-reset').addEventListener('click', () => {
+  for (const g of SPRITE_GROUPS) {
+    try { localStorage.removeItem(SPR_STORE + g.key); } catch { /* 消せなくても戻す */ }
+  }
+  clearSprites();
+  afterSpriteChange();
+});
+
+loadSavedSprites();
+buildSpriteSlots();
