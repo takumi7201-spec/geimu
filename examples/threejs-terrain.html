@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mesozoic Atlas — Three.js 地形ビューア</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui; background: #0b0f1a; color: #fff; }
+    #canvas { display: block; width: 100vw; height: 100vh; }
+    #info {
+      position: absolute;
+      top: 20px; left: 20px;
+      background: rgba(0,0,0,0.7);
+      padding: 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      max-width: 300px;
+      line-height: 1.6;
+    }
+    #info h2 { margin-bottom: 10px; color: #4db8ff; }
+    #info p { margin: 4px 0; }
+    #controls {
+      position: absolute;
+      bottom: 20px; left: 20px;
+      background: rgba(0,0,0,0.7);
+      padding: 15px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    .loading {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      padding: 30px;
+      border-radius: 8px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<div class="loading" id="loading">
+  <p>中生代アトラスを生成中...</p>
+  <p id="progress-text" style="margin-top: 10px; font-size: 12px; color: #888;">0%</p>
+</div>
+
+<div id="info">
+  <h2>中生代アトラス</h2>
+  <p><b id="era-name">ジュラ紀</b></p>
+  <p id="era-desc">年代: <span id="era-ma">160</span> 百万年前</p>
+  <hr style="margin: 10px 0; border: none; border-top: 1px solid #444;">
+  <p><b>シード:</b> <span id="seed">pangaea</span></p>
+  <p><b>解像度:</b> <span id="size">medium</span></p>
+  <p><b>高度:</b> <span id="altitude">0</span>m</p>
+</div>
+
+<div id="controls">
+  <p><b>操作:</b></p>
+  <p>🖱️ ドラッグ: 視点回転</p>
+  <p>⌨️ W/A/S/D: 移動</p>
+  <p>⌨️ Space/Shift: 上下</p>
+  <p>🔍 スクロール: ズーム</p>
+  <p>⌨️ R: リセット</p>
+</div>
+
+<script type="module">
+  import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+  import { generateWorld, SIZES } from '../src/world/worldgen.js';
+  import { buildRaster } from '../src/render/raster.js';
+  import { getEra } from '../src/world/eras.js';
+  import { toMeters, BIOME_COLORS } from '../src/world/biomes.js';
+
+  // パラメータ
+  const params = {
+    seed: 'pangaea',
+    size: 'medium',
+    ma: 160,
+  };
+
+  // Three.js セットアップ
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1a2332);
+  scene.fog = new THREE.Fog(0x1a2332, 500, 3000);
+
+  const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    5000
+  );
+  camera.position.set(0, 200, 300);
+  camera.lookAt(0, 0, 0);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowShadowMap;
+  document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+  // ライティング
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight.position.set(500, 500, 500);
+  directionalLight.castShadow = true;
+  directionalLight.shadow.mapSize.width = 2048;
+  directionalLight.shadow.mapSize.height = 2048;
+  directionalLight.shadow.camera.left = -1000;
+  directionalLight.shadow.camera.right = 1000;
+  directionalLight.shadow.camera.top = 1000;
+  directionalLight.shadow.camera.bottom = -1000;
+  directionalLight.shadow.camera.far = 2000;
+  scene.add(directionalLight);
+
+  // カメラコントローラー
+  let isDragging = false;
+  let previousMousePosition = { x: 0, y: 0 };
+  const cameraRotation = { x: 0, y: 0 };
+  const moveDirection = { forward: 0, right: 0, up: 0 };
+
+  window.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    previousMousePosition = { x: e.clientX, y: e.clientY };
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (isDragging) {
+      const deltaX = e.clientX - previousMousePosition.x;
+      const deltaY = e.clientY - previousMousePosition.y;
+      cameraRotation.y += deltaX * 0.005;
+      cameraRotation.x += deltaY * 0.005;
+      cameraRotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cameraRotation.x));
+      previousMousePosition = { x: e.clientX, y: e.clientY };
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+  });
+
+  window.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const distance = camera.position.length();
+    const newDistance = Math.max(50, Math.min(2000, distance + e.deltaY * 0.5));
+    const scale = newDistance / distance;
+    camera.position.multiplyScalar(scale);
+  });
+
+  const keys = {};
+  window.addEventListener('keydown', (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === 'r' || e.key === 'R') {
+      camera.position.set(0, 200, 300);
+      cameraRotation.x = 0;
+      cameraRotation.y = 0;
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  // ウィンドウリサイズ
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // 地形生成
+  async function generateTerrain() {
+    const sizeObj = SIZES[params.size];
+    const width = sizeObj.map;
+    const height = sizeObj.map;
+    const resolution = sizeObj.voxel;
+
+    // 世界生成
+    const world = generateWorld(params.seed, params.ma, width, height, resolution);
+
+    // ラスタ（テクスチャ）生成
+    const raster = buildRaster(world, 'biome');
+
+    // Canvas からテクスチャを作成
+    const texture = new THREE.CanvasTexture(raster.canvas);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+
+    // ジオメトリ生成（高さマップベース）
+    const segmentsX = Math.min(width - 1, 256);
+    const segmentsZ = Math.min(height - 1, 256);
+    const geometry = new THREE.PlaneGeometry(width * 20, height * 20, segmentsX, segmentsZ);
+    geometry.rotateX(-Math.PI / 2);
+
+    // 高さを設定
+    const positionAttribute = geometry.getAttribute('position');
+    const positions = positionAttribute.array;
+    for (let i = 0; i < positionAttribute.count; i++) {
+      const x = Math.floor((i % (segmentsX + 1)) * (width / segmentsX));
+      const z = Math.floor(Math.floor(i / (segmentsX + 1)) * (height / segmentsZ));
+      const elev = world.elev[z * width + x];
+      positions[i * 3 + 1] = toMeters(elev);
+    }
+    positionAttribute.needsUpdate = true;
+    geometry.computeVertexNormals();
+
+    // マテリアル
+    const material = new THREE.MeshPhongMaterial({
+      map: texture,
+      side: THREE.DoubleSide,
+      shadowSide: THREE.BackSide,
+    });
+
+    // メッシュ作成
+    const terrain = new THREE.Mesh(geometry, material);
+    terrain.receiveShadow = true;
+    terrain.castShadow = true;
+    scene.add(terrain);
+
+    // 情報更新
+    const era = getEra(params.ma);
+    document.getElementById('era-name').textContent = era.age;
+    document.getElementById('era-desc').textContent = `年代: ${params.ma} 百万年前`;
+    document.getElementById('era-ma').textContent = params.ma;
+    document.getElementById('seed').textContent = params.seed;
+    document.getElementById('size').textContent = params.size;
+    document.getElementById('loading').style.display = 'none';
+  }
+
+  generateTerrain().catch(console.error);
+
+  // アニメーションループ
+  function animate() {
+    requestAnimationFrame(animate);
+
+    // カメラ更新
+    const distance = 300;
+    camera.position.x = Math.sin(cameraRotation.y) * Math.cos(cameraRotation.x) * distance;
+    camera.position.y = Math.sin(cameraRotation.x) * distance + 100;
+    camera.position.z = Math.cos(cameraRotation.y) * Math.cos(cameraRotation.x) * distance;
+    camera.lookAt(0, 50, 0);
+
+    // 高度表示
+    const altitude = camera.position.y;
+    document.getElementById('altitude').textContent = Math.round(altitude);
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+</script>
+
+</body>
+</html>
