@@ -21,6 +21,7 @@ import {
   serializeScene, describeScene, SCENE_FORMAT, createBody, stepBody, columnTop, PHYS,
 } from '../src/game/api.js';
 import { Explorer } from '../src/game/player.js';
+import { initFauna, stepFauna, FAUNA_PHYS } from '../src/game/fauna.js';
 
 const argSeeds = Number((process.argv.find((a, i) => process.argv[i - 1] === '--seeds') || 4));
 const SEEDS = ['pangaea', 'tethys', 'gondwana', 'panthalassa', 'laurasia', 'deccan'].slice(0, Math.max(2, argSeeds));
@@ -275,6 +276,86 @@ console.log('\n[地表ボクセル]');
 }
 
 // ---- 5. ゲーム層（当たり判定・出現・書き出し） --------------------------
+console.log('\n[動物の動き]');
+{
+  const game = await createGameWorld({ seed: 'pangaea', ma: 160, size: 'small' });
+  const scene = await enterScene(game, null, { size: 'small', variant: 'game' });
+  initFauna(scene);
+  const T = scene.total;
+  const before = scene.fauna.map((f) => ({ x: f.x, z: f.z }));
+
+  for (let i = 0; i < 900; i++) stepFauna(scene, 1 / 30, null);   // 30 秒ぶん
+
+  const moved = scene.fauna.filter((f, i) => Math.hypot(f.x - before[i].x, f.z - before[i].z) > 1.5).length;
+  if (!scene.fauna.length) pass('この区画に動物は居ない（検証は飛ばす）');
+  else if (moved >= Math.ceil(scene.fauna.length * 0.6)) pass(`${scene.fauna.length} 頭中 ${moved} 頭が歩き回った`);
+  else fail(`${scene.fauna.length} 頭中 ${moved} 頭しか動かない`);
+
+  // 区画から出ない・地面に埋まらない・空へ飛び去らない
+  let out = 0, buried = 0, sky = 0;
+  for (const f of scene.fauna) {
+    if (f.x < 1 || f.z < 1 || f.x > T - 2 || f.z > T - 2) out++;
+    const g = scene.height[(f.z | 0) * T + (f.x | 0)];
+    if (!f.flying && !f.swimming && f.y < g - 0.5) buried++;
+    if (f.y > g + 90) sky++;
+  }
+  if (out) fail(`${out} 頭が区画の外へ出た`);
+  else pass('どの個体も区画の中に留まる');
+  if (buried) fail(`${buried} 頭が地面にめり込んでいる`);
+  else pass('地面にめり込まない（段差も越える）');
+  if (sky) fail(`${sky} 頭が空へ飛び去った`);
+  else pass('空へ飛び去らない');
+
+  // 生まれた場所から離れすぎない（群れが散りきらない）
+  const far = scene.fauna.filter((f) => Math.hypot(f.x - f.home.x, f.z - f.home.z) > FAUNA_PHYS.roam * 2).length;
+  if (far) fail(`${far} 頭が縄張りから離れすぎた`);
+  else pass('縄張りの内に収まる');
+
+  // こちらに気づいて、追うか逃げるかすること
+  const land = scene.fauna.filter((f) => !f.flying && !f.swimming);
+  if (!land.length) pass('陸の動物が居ないので、追跡と逃走は検証しない');
+  else {
+    const f = land[0];
+    const player = { x: f.x + 6, z: f.z + 6 };
+    const d0 = Math.hypot(f.x - player.x, f.z - player.z);
+    for (let i = 0; i < 240; i++) stepFauna(scene, 1 / 30, player);
+    const d1 = Math.hypot(f.x - player.x, f.z - player.z);
+    const hunter = f.diet === '肉';
+    if (f.state === 'idle') fail(`${f.name} が近づかれても反応しない`);
+    else if (hunter && d1 <= d0 + 1) pass(`${f.name}（肉食）が距離 ${d0.toFixed(1)} → ${d1.toFixed(1)} と詰め寄る`);
+    else if (!hunter && d1 >= d0 - 1) pass(`${f.name}（${f.diet}）が距離 ${d0.toFixed(1)} → ${d1.toFixed(1)} と離れる`);
+    else fail(`${f.name}（${f.diet}）の反応が逆：${d0.toFixed(1)} → ${d1.toFixed(1)}`);
+  }
+
+  // 噛みつきの姿勢に入れること
+  const meat = scene.fauna.find((f) => f.diet === '肉' && !f.flying && !f.swimming);
+  if (!meat) pass('この区画に肉食は居ない（噛みつきは検証しない）');
+  else {
+    let sawAttack = false;
+    for (let i = 0; i < 400 && !sawAttack; i++) {
+      stepFauna(scene, 1 / 30, { x: meat.x + 1.5, z: meat.z });
+      if (meat.state === 'attack') sawAttack = true;
+    }
+    if (sawAttack) pass(`${meat.name} が間合いに入ると噛みつきに移る`);
+    else fail(`${meat.name} が間合いでも噛みつかない`);
+  }
+
+  // 歩みの位相が速さについてくる（描画側はこれで足の運びを作る）
+  const walker = scene.fauna.find((f) => !f.flying && !f.swimming);
+  if (walker) {
+    walker.state = 'walk'; walker.speed = FAUNA_PHYS.walk;
+    const p0 = walker.phase;
+    for (let i = 0; i < 30; i++) stepFauna(scene, 1 / 30, null);
+    const slow = walker.phase - p0;
+    walker.state = 'run'; walker.speed = FAUNA_PHYS.run;
+    const p1 = walker.phase;
+    for (let i = 0; i < 30; i++) stepFauna(scene, 1 / 30, null);
+    const fast = walker.phase - p1;
+    if (fast > slow) pass(`走ると足の運びが速くなる（${slow.toFixed(2)} → ${fast.toFixed(2)} rad/秒）`);
+    else fail(`走っても足の運びが変わらない（${slow.toFixed(2)} → ${fast.toFixed(2)}）`);
+  }
+}
+
 console.log('\n[ゲーム層]');
 {
   const game = await createGameWorld({ seed: 'pangaea', ma: 160, size: 'small' });

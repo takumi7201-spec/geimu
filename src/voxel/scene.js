@@ -510,6 +510,11 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
         y: flying ? Math.max(hb, wl === WATER_NONE ? hb : wl) + 8 + ((rand() * 14) | 0) : (wet ? wl : hb) + 1,
         yaw: rand() * Math.PI * 2,
         name: sp.name, latin: sp.latin, group: sp.group, size: sp.size,
+        // 振る舞いの素。diet で追う側か逃げる側かが決まり、
+        // phase は歩みの位相（同じ群れが揃って足踏みしないよう個体ごとにずらす）
+        diet: sp.diet, flying, swimming,
+        phase: rand() * Math.PI * 2,
+        home: { x, z },
       });
     }
   }

@@ -4395,6 +4395,11 @@ async function buildVoxelScene(world, opts, onProgress = () => {}) {
         y: flying ? Math.max(hb, wl === WATER_NONE ? hb : wl) + 8 + ((rand() * 14) | 0) : (wet ? wl : hb) + 1,
         yaw: rand() * Math.PI * 2,
         name: sp.name, latin: sp.latin, group: sp.group, size: sp.size,
+        // 振る舞いの素。diet で追う側か逃げる側かが決まり、
+        // phase は歩みの位相（同じ群れが揃って足踏みしないよう個体ごとにずらす）
+        diet: sp.diet, flying, swimming,
+        phase: rand() * Math.PI * 2,
+        home: { x, z },
       });
     }
   }
@@ -4695,6 +4700,9 @@ class MeshBuilder {
 
 // 面の向きごとの明るさ。太陽は北西の高い位置に固定する。
 // 天面を 1.0 に正規化してあるので、掛けても色が飽和しない
+/** 板の最小の幅（ブロック）。これ未満の種はこの大きさで描く */
+const SPRITE_MIN_W = 2.0;
+
 const SUN = (() => { const v = [-0.42, 0.84, 0.34]; const l = Math.hypot(...v); return v.map((k) => k / l); })();
 function rawShade(nx, ny, nz) {
   const d = Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2]);
@@ -5048,27 +5056,95 @@ class VoxelRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    const F = new Float32Array(list.length * 6 * 7);
-    let o = 0;
-    for (const { f, k } of list) {
-      const sp = sprite(k), st = slot[k];
-      // 絵の横幅がその種の全長。高さは絵の縦横比に従う（1 ブロック = 6m）
-      const wB = Math.max(0.25, f.size / VOX_M);
-      const hB = wB * (sp.h / sp.w), hw = wB / 2;
-      const u0 = st.x / AW, u1 = (st.x + sp.w) / AW;
-      const v1 = sp.h / AH;                       // 絵の上端が v=0、下端が v1
-      const cx = f.x + 0.5, cy = f.y, cz = f.z + 0.5;
-      const put = (dx, dy, u, v) => {
-        F[o++] = cx; F[o++] = cy; F[o++] = cz;
-        F[o++] = dx; F[o++] = dy; F[o++] = u; F[o++] = v;
-      };
-      put(-hw, 0, u0, v1); put(hw, 0, u1, v1); put(hw, hB, u1, 0);
-      put(-hw, 0, u0, v1); put(hw, hB, u1, 0); put(-hw, hB, u0, 0);
-    }
+    // 位置も向きも毎フレーム変わるので、器だけ作って中身は _updateSprites が書く
+    this.spriteList = list.map((e) => ({ ...e, slot: slot[e.k], sp: sprite(e.k) }));
+    this.spriteData = new Float32Array(list.length * 6 * 7);
+    this.spriteUV = { AW, AH };
     const vb = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vb);
-    gl.bufferData(gl.ARRAY_BUFFER, F, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.spriteData.byteLength, gl.DYNAMIC_DRAW);
     this.spriteMesh = { vb, count: list.length * 6 };
+    this._updateSprites();
+  }
+
+  /**
+   * 動物の板を今の姿に書き換える。絵は 1 枚なので、動きは
+   *   ・上下の揺れ（歩幅）
+   *   ・前傾（走り）
+   *   ・前への踏み込み（噛みつき）
+   * の三つで作る。位相 phase はゲーム層が速度に比例して進めている。
+   */
+  _updateSprites() {
+    if (!this.spriteMesh || !this.spriteList) return;
+    const gl = this.gl;
+    const F = this.spriteData;
+    const { AW, AH } = this.spriteUV;
+    const eye = this._eye();
+    let o = 0;
+
+    for (const { f, sp, slot: st } of this.spriteList) {
+      // 絵の横幅がその種の全長。ただし 1 ブロック（6m）は木立の中では数画素にしかならず、
+      // 6m の獣脚類が背景に沈む。小さい種にだけ下限を置いて、大きい種は実寸のままにする
+      // （下限を上げるのではなく倍率を掛けると、竜脚類が区画からはみ出す）
+      const wB = Math.max(SPRITE_MIN_W, f.size / VOX_M);
+      const hB = wB * (sp.h / sp.w), hw = wB / 2;
+
+      const state = f.state || 'idle';
+      const ph = f.phase || 0;
+      let bob = 0, lean = 0, lunge = 0, squash = 0;
+      if (state === 'walk') {
+        bob = Math.sin(ph * 2) * hB * 0.045;
+        lean = Math.sin(ph) * 0.05;
+      } else if (state === 'run') {
+        bob = Math.sin(ph * 2) * hB * 0.085;
+        lean = 0.17 + Math.sin(ph * 2) * 0.06;
+      } else if (state === 'attack') {
+        // 噛みつきは、沈んでから前へ出る
+        const t = Math.min(1, (f.lunge || 0) / 1.1);
+        const k = Math.sin(t * Math.PI);
+        lunge = k * wB * 0.42;
+        lean = 0.28 * k;
+        squash = -0.10 * k;
+      } else {
+        bob = Math.sin(ph * 0.7) * hB * 0.012;   // 息づかい
+        squash = Math.sin(ph * 0.7) * 0.012;
+      }
+      if (f.flying) { bob += Math.sin(ph * 1.5) * hB * 0.10; lean = Math.sin(ph * 1.5) * 0.10; }
+      if (f.swimming) { lean = Math.sin(ph) * 0.13; }
+
+      // 板の右方向（シェーダと同じ向き）と進む向きの内積で、絵を裏返すか決める。
+      // これをしないと、右へ歩いても左向きの絵のまま後ずさりして見える
+      const cxw = f.x + 0.5, czw = f.z + 0.5;
+      const tox = cxw - eye[0], toz = czw - eye[2];
+      const tl = Math.hypot(tox, toz) || 1;
+      const rx = -toz / tl, rz = tox / tl;
+      const facing = Math.cos(f.yaw) * rx + Math.sin(f.yaw) * rz;
+      const flip = facing < 0;
+
+      const cx = cxw + Math.cos(f.yaw) * lunge;
+      const cz = czw + Math.sin(f.yaw) * lunge;
+      const cy = f.y + bob;
+
+      let u0 = st.x / AW, u1 = (st.x + sp.w) / AW;
+      if (flip) { const t = u0; u0 = u1; u1 = t; }
+      const v1 = sp.h / AH;
+
+      // 足元を軸に傾ける。進む向きが画面の左右どちらかで倒れる側も変わる
+      const L = flip ? -lean : lean;
+      const cs = Math.cos(L), sn = Math.sin(L);
+      const top = hB * (1 + squash);
+      const put = (dx, dy, u, v) => {
+        F[o++] = cx; F[o++] = cy; F[o++] = cz;
+        F[o++] = dx * cs - dy * sn;
+        F[o++] = dx * sn + dy * cs;
+        F[o++] = u; F[o++] = v;
+      };
+      put(-hw, 0, u0, v1); put(hw, 0, u1, v1); put(hw, top, u1, 0);
+      put(-hw, 0, u0, v1); put(hw, top, u1, 0); put(-hw, top, u0, 0);
+    }
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteMesh.vb);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, F);
   }
 
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
@@ -5192,6 +5268,8 @@ class VoxelRenderer {
     if (!this.ok || !this.scene) return;
     const gl = this.gl;
     this.time += dt * 0.001;
+    // 動物は毎フレーム居場所も姿も変わる。板だけ書き直す（地形は据え置き）
+    this._updateSprites();
     const s = this.scene;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.enable(gl.DEPTH_TEST);
@@ -5786,19 +5864,46 @@ async function enterScene(game, spot = null, opts = {}, onProgress = () => {}) {
  */
 const zi = (scene, x, z) => (z | 0) * scene.total + (x | 0);
 
+/** その地点の目線から相手が見えるか（地形に遮られていないか） */
+function canSee(scene, from, target) {
+  const ex = from.x, ey = from.y + PHYS.eye, ez = from.z;
+  const dx = target.x + 0.5 - ex, dy = target.y - ey, dz = target.z + 0.5 - ez;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 1) return true;
+  const hit = raycast(scene, [ex, ey, ez], [dx / len, dy / len, dz / len], len);
+  return !hit || hit.dist > len - 1.5;
+}
+
 function findSpawn(scene, opts = {}) {
-  const { preferDry = true, maxSlope = 2 } = opts;
-  const c = Math.floor(scene.total / 2);
+  const { preferDry = true, maxSlope = 2, nearFauna = true } = opts;
+  // 区画は 2km 四方あり、真ん中に降りると群れが 300m 先ということが起きる。
+  // 降りた先で何も動いていないと世界が止まって見えるので、陸の群れの
+  // そばを起点にする（真上には出さないよう、少し離れた輪から探す）
+  let cx = Math.floor(scene.total / 2), cz = cx, rMin = 0, watch = null;
+  if (nearFauna && scene.fauna && scene.fauna.length) {
+    // 翼竜は 40m 上を飛ぶので、そばに降りても見上げないと目に入らない。
+    // 地を歩く種を優先し、居なければ空か水の種で妥協する
+    const walkers = scene.fauna.filter((f) => !f.swimming && !f.flying);
+    const land = walkers.length ? walkers : scene.fauna.filter((f) => !f.swimming);
+    if (land.length) {
+      const c0 = Math.floor(scene.total / 2);
+      const near = land.reduce((a, b) =>
+        Math.hypot(a.x - c0, a.z - c0) <= Math.hypot(b.x - c0, b.z - c0) ? a : b);
+      cx = Math.round(near.x); cz = Math.round(near.z); rMin = 9;
+      watch = near;
+    }
+  }
+  const c = cx;
   const step = Math.max(1, Math.floor(scene.cols / 48));
-  let fallback = null;
-  for (let r = 0; r < scene.cols; r += step) {
+  let fallback = null, loose = null;
+  for (let r = rMin; r < scene.cols; r += step) {
     for (let k = 0; k < Math.max(1, r * 4); k += step) {
       // 半径 r の正方リング上を歩く
       const t = r === 0 ? 0 : (k / Math.max(1, r * 4)) * 4;
       const side = Math.floor(t) % 4;
       const f = (t % 1) * 2 - 1;
       const x = c + Math.round(side === 0 ? r : side === 1 ? -f * r : side === 2 ? -r : f * r);
-      const z = c + Math.round(side === 0 ? f * r : side === 1 ? r : side === 2 ? -f * r : -r);
+      const z = cz + Math.round(side === 0 ? f * r : side === 1 ? r : side === 2 ? -f * r : -r);
       if (x < 2 || z < 2 || x >= scene.total - 2 || z >= scene.total - 2) continue;
       const h = columnTop(scene, x, z);
       const w = waterTop(scene, x, z);
@@ -5821,10 +5926,17 @@ function findSpawn(scene, opts = {}) {
       if (!fallback) fallback = { x: x + 0.5, z: z + 0.5, y: Math.max(h, w === -Infinity ? h : w) };
       if (slope > maxSlope) continue;
       if (preferDry && !dry) continue;
-      return { x: x + 0.5, z: z + 0.5, y: h };
+      const here = { x: x + 0.5, z: z + 0.5, y: h };
+      // 生き物が地形の陰なら、そこは「近い」だけで何も見えない。
+      // 目線から視線が通る場所を探し、見つからなければ近さで妥協する
+      if (watch) {
+        if (!loose) loose = here;
+        if (!canSee(scene, here, watch)) continue;
+      }
+      return here;
     }
   }
-  return fallback || { x: c + 0.5, z: c + 0.5, y: columnTop(scene, c, c) };
+  return loose || fallback || { x: c + 0.5, z: cz + 0.5, y: columnTop(scene, c, cz) };
 }
 
 /** 1 本の柱の環境を問い合わせる（UI 表示にも AI の判断にも使える） */
@@ -5936,9 +6048,196 @@ function serializeScene(scene, opts = {}) {
 return { SCENE_FORMAT, createGameWorld, enterScene, findSpawn, sampleColumn, faunaNear, describeScene, toBase64, serializeScene, WORLD_SIZES };
 })();
 
+// ===== src/game/fauna.js =====
+const { FAUNA_PHYS, initFauna, stepFauna } = await (async () => {
+/**
+ * 動物の振る舞い。歩き回り、こちらに気づき、追うか逃げるかする。
+ *
+ * 絵は 1 枚きりなので、脚を描き分けることはできない。動きは
+ *   ・実際に位置が変わること
+ *   ・上下の揺れと前傾（描画側が phase から作る）
+ * の二つで見せる。歩幅の速さ（phase の進み）は速度に比例させるので、
+ * 走ると足踏みも速くなる。
+ *
+ * DOM も WebGL も触らない。Node からも回せる。
+ */
+
+
+
+
+const FAUNA_PHYS = {
+  walk: 0.9,        // ブロック/秒（1 ブロック 6m なので 5.4 m/s ほど）
+  run: 2.6,
+  fly: 1.8,
+  swim: 1.2,
+  turn: 2.6,        // rad/秒。これ以上速く向きを変えると、板の反転がちらつく
+  sense: 70,        // こちらに気づく距離（ブロック＝420m）。狭いと森で一生すれ違う
+  lunge: 4.0,       // 肉食がここまで詰めたら噛みつきに入る
+  flee: 11,         // 草食が逃げ出す距離（ブロック＝66m）。遠すぎると、降りた途端に散ってしまう
+  roam: 46,         // 生まれた場所からこれ以上は離れない（群れが散らばりきらない）
+  stepUp: 1.2,      // 登れる段差。これを超える壁は迂回する
+};
+
+const TAU = Math.PI * 2;
+/** 角度差を -π..π に畳む。畳まないと、真後ろを向くときに遠回りする */
+function angleDelta(a, b) {
+  let d = (b - a) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
+/** 群れを動かせる形に整える。scene を作り直したときに一度だけ呼ぶ */
+function initFauna(scene) {
+  if (!scene || !scene.fauna) return;
+  for (const f of scene.fauna) {
+    f.state = 'idle';
+    f.speed = 0;
+    f.timer = 0.6 + (f.phase / TAU) * 3.2;   // 群れが一斉に動き出さないようずらす
+    f.goal = null;
+    f.lunge = 0;
+    if (!f.home) f.home = { x: f.x, z: f.z };
+    if (f.phase === undefined) f.phase = 0;
+  }
+  scene._faunaReady = true;
+}
+
+/** その地点で立てる高さ。段差が急なら null（そこへは進めない） */
+function standAt(scene, x, z, fromY) {
+  const T = scene.total;
+  if (x < 2 || z < 2 || x > T - 3 || z > T - 3) return null;
+  const g = columnTop(scene, x, z);
+  const ob = obstacleTop(scene, x, z);
+  const top = Math.max(g, ob);
+  if (fromY !== undefined && top - fromY > FAUNA_PHYS.stepUp) return null;
+  return top + 1;
+}
+
+/** 群れをひとつ進める。player は { x, z } でよい（居なければ null） */
+function stepFauna(scene, dt, player = null) {
+  if (!scene || !scene.fauna || !scene.fauna.length) return;
+  if (!scene._faunaReady) initFauna(scene);
+  const P = FAUNA_PHYS;
+  const step = Math.min(dt, 0.05);          // 大きな dt でも壁をすり抜けない
+  let left = Math.min(dt, 0.25);
+
+  while (left > 0) {
+    const d = Math.min(step, left);
+    left -= d;
+    for (const f of scene.fauna) stepOne(scene, f, d, player, P);
+  }
+}
+
+function stepOne(scene, f, dt, player, P) {
+  const dist = player ? Math.hypot(player.x - f.x, player.z - f.z) : Infinity;
+  const hunter = f.diet === '肉' || f.diet === '魚';
+
+  // ---- 何をするか決める ------------------------------------------------
+  f.timer -= dt;
+  if (dist < P.sense && player) {
+    // 気づいたら、追うか逃げるか。魚食は水の中の相手にしか関心を示さない
+    if (hunter && !f.swimming) {
+      f.state = dist < P.lunge ? 'attack' : 'run';
+      f.goal = { x: player.x, z: player.z };
+    } else if (!hunter && dist < P.flee) {
+      f.state = 'run';
+      const a = Math.atan2(f.z - player.z, f.x - player.x);
+      f.goal = { x: f.x + Math.cos(a) * 20, z: f.z + Math.sin(a) * 20 };
+    }
+  } else if (f.timer <= 0) {
+    // 気ままに歩く。生まれた場所から離れすぎたら戻る
+    const away = Math.hypot(f.x - f.home.x, f.z - f.home.z);
+    if (f.state === 'walk' || f.state === 'run') {
+      f.state = 'idle';
+      f.timer = 1.2 + (f.phase % 1) * 2.6;
+      f.goal = null;
+    } else {
+      f.state = 'walk';
+      f.timer = 2.4 + (f.phase % 1) * 4.0;
+      const a = away > P.roam
+        ? Math.atan2(f.home.z - f.z, f.home.x - f.x) + (Math.sin(f.phase * 7) * 0.6)
+        : f.yaw + Math.sin(f.phase * 3 + f.timer) * 1.8;
+      const reach = 8 + (f.phase % 1) * 14;
+      f.goal = { x: f.x + Math.cos(a) * reach, z: f.z + Math.sin(a) * reach };
+    }
+  }
+
+  // 噛みついたら、間合いを取り直す
+  if (f.state === 'attack') {
+    f.lunge += dt;
+    if (f.lunge > 1.1) { f.lunge = 0; f.state = dist < P.sense ? 'run' : 'idle'; f.timer = 0.8; }
+  } else {
+    f.lunge = 0;
+  }
+
+  // ---- 向きと速さ ------------------------------------------------------
+  let want = 0;
+  if (f.state === 'walk') want = P.walk;
+  else if (f.state === 'run') want = P.run;
+  else if (f.state === 'attack') want = P.walk * 0.5;
+  if (f.flying) want = f.state === 'idle' ? P.fly * 0.6 : P.fly;      // 翼竜は止まらない
+  else if (f.swimming) want = Math.max(want, P.swim * 0.5);
+
+  if (f.goal) {
+    const target = Math.atan2(f.goal.z - f.z, f.goal.x - f.x);
+    f.yaw += clamp(angleDelta(f.yaw, target), -P.turn * dt, P.turn * dt);
+  } else if (f.flying) {
+    f.yaw += dt * 0.35;      // 何もないときは大きく旋回する
+  }
+
+  f.speed += (want - f.speed) * Math.min(1, dt * 5);
+  f.phase += dt * (1.6 + f.speed * 3.4);    // 速いほど足が速く動く
+
+  // ---- 進む ------------------------------------------------------------
+  const nx = f.x + Math.cos(f.yaw) * f.speed * dt;
+  const nz = f.z + Math.sin(f.yaw) * f.speed * dt;
+
+  if (f.flying) {
+    const ground = columnTop(scene, nx | 0, nz | 0);
+    const T = scene.total;
+    if (nx > 2 && nz > 2 && nx < T - 3 && nz < T - 3) { f.x = nx; f.z = nz; }
+    else { f.yaw += Math.PI * 0.6; }         // 縁で折り返す
+    // 地面すれすれには降りない。高さはゆっくり戻す
+    // 高く飛ばせると、真下に降りても見上げないと目に入らない
+    const want2 = ground + 5.5 + Math.sin(f.phase * 0.35) * 2;
+    f.y += (want2 - f.y) * Math.min(1, dt * 0.8);
+    return;
+  }
+
+  if (f.swimming) {
+    const T = scene.total;
+    const i = (nz | 0) * T + (nx | 0);
+    const wl = scene.water[i];
+    const bed = scene.height[i];
+    // 水から出ない。岸に当たったら向きを変える
+    if (nx > 2 && nz > 2 && nx < T - 3 && nz < T - 3 && wl !== WATER_NONE && wl > bed + 1) {
+      f.x = nx; f.z = nz;
+      f.y += ((bed + Math.min(2.2, (wl - bed) * 0.5)) - f.y) * Math.min(1, dt * 2);
+    } else {
+      f.yaw += Math.PI * 0.55;
+    }
+    return;
+  }
+
+  const top = standAt(scene, nx | 0, nz | 0, f.y - 1);
+  if (top !== null) {
+    f.x = nx; f.z = nz;
+    f.y += (top - f.y) * Math.min(1, dt * 9);   // 段差はなめらかに乗り越える
+  } else {
+    // 壁。向きを変えて回り込む（同じ壁で往復しないよう回る向きを個体で決める）
+    f.yaw += (f.phase > Math.PI ? 1 : -1) * dt * 5.5;
+    f.speed *= 0.6;
+    f.goal = null;
+    f.timer = Math.min(f.timer, 0.4);
+  }
+}
+return { FAUNA_PHYS, initFauna, stepFauna };
+})();
+
 // ===== src/main.js =====
 await (async () => {
 /** アプリ本体：UI と生成器・2D 描画・3D 地球儀の接続 */
+
 
 
 
@@ -6150,6 +6449,7 @@ async function descend(spot = null, variant = '') {
     label.textContent = 'ブロックを積んでいます';
     await new Promise((r) => requestAnimationFrame(() => r()));
     state.voxScene = scene;
+    initFauna(scene);      // 群れを動かせる形に整える
     state.voxSpot = target;
     state.voxDirty = false;
     vox.setScene(scene);
@@ -6181,7 +6481,13 @@ function setExplore(on) {
   state.explore = on;
   if (on) {
     const spawn = findSpawn(state.voxScene);
-    state.explorer = new Explorer(state.voxScene, spawn, { yaw: vox.cam.yaw, pitch: -0.1, invertY: PREF.invertY });
+    // 降りた向きが崖や幹だと、何も居ない壁を見て始めることになる。
+    // いちばん近い生き物のほうを向いておく（yaw は前進が (-sin, -cos) の系）
+    const near = faunaNear(state.voxScene, spawn.x, spawn.z, 140)[0];
+    const yaw = near
+      ? Math.atan2(-(near.x - spawn.x), -(near.z - spawn.z))
+      : vox.cam.yaw;
+    state.explorer = new Explorer(state.voxScene, spawn, { yaw, pitch: -0.1, invertY: PREF.invertY });
     vox.setFirstPerson(true);
     voxCanvas.classList.add('explore');
     hideInspector();
@@ -6216,7 +6522,7 @@ function updateVoxHud() {
   const s = state.voxScene;
   if (!st) return;
   const col = sampleColumn(s, st.x, st.z);
-  const near = faunaNear(s, st.x, st.z, 30)[0];
+  const near = faunaNear(s, st.x, st.z, 70)[0];
   const mode = st.flying ? '飛行' : st.submerged ? '潜水' : st.inWater ? '遊泳' : st.onGround ? '徒歩' : '落下';
   hud.innerHTML =
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
@@ -6532,6 +6838,9 @@ function voxLoop(t) {
   requestAnimationFrame(voxLoop);
   if (!vox || !vox.ok || !state.voxScene) return;
   const dt = voxLast ? (t - voxLast) / 1000 : 1 / 60;
+  // 動物は俯瞰でも動き続ける。見ている間だけなので、止まっていても困らない
+  const who = state.explorer && state.explorer.status();
+  stepFauna(state.voxScene, dt, who ? { x: who.x, z: who.z } : null);
   if (state.explore && state.explorer) {
     // 探索中は間引かない（間引くと視点がかくつき、当たり判定も粗くなる）
     const v = state.explorer.update(dt);

@@ -206,6 +206,9 @@ class MeshBuilder {
 
 // 面の向きごとの明るさ。太陽は北西の高い位置に固定する。
 // 天面を 1.0 に正規化してあるので、掛けても色が飽和しない
+/** 板の最小の幅（ブロック）。これ未満の種はこの大きさで描く */
+const SPRITE_MIN_W = 2.0;
+
 const SUN = (() => { const v = [-0.42, 0.84, 0.34]; const l = Math.hypot(...v); return v.map((k) => k / l); })();
 function rawShade(nx, ny, nz) {
   const d = Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2]);
@@ -559,27 +562,95 @@ export class VoxelRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    const F = new Float32Array(list.length * 6 * 7);
-    let o = 0;
-    for (const { f, k } of list) {
-      const sp = sprite(k), st = slot[k];
-      // 絵の横幅がその種の全長。高さは絵の縦横比に従う（1 ブロック = 6m）
-      const wB = Math.max(0.25, f.size / VOX_M);
-      const hB = wB * (sp.h / sp.w), hw = wB / 2;
-      const u0 = st.x / AW, u1 = (st.x + sp.w) / AW;
-      const v1 = sp.h / AH;                       // 絵の上端が v=0、下端が v1
-      const cx = f.x + 0.5, cy = f.y, cz = f.z + 0.5;
-      const put = (dx, dy, u, v) => {
-        F[o++] = cx; F[o++] = cy; F[o++] = cz;
-        F[o++] = dx; F[o++] = dy; F[o++] = u; F[o++] = v;
-      };
-      put(-hw, 0, u0, v1); put(hw, 0, u1, v1); put(hw, hB, u1, 0);
-      put(-hw, 0, u0, v1); put(hw, hB, u1, 0); put(-hw, hB, u0, 0);
-    }
+    // 位置も向きも毎フレーム変わるので、器だけ作って中身は _updateSprites が書く
+    this.spriteList = list.map((e) => ({ ...e, slot: slot[e.k], sp: sprite(e.k) }));
+    this.spriteData = new Float32Array(list.length * 6 * 7);
+    this.spriteUV = { AW, AH };
     const vb = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vb);
-    gl.bufferData(gl.ARRAY_BUFFER, F, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.spriteData.byteLength, gl.DYNAMIC_DRAW);
     this.spriteMesh = { vb, count: list.length * 6 };
+    this._updateSprites();
+  }
+
+  /**
+   * 動物の板を今の姿に書き換える。絵は 1 枚なので、動きは
+   *   ・上下の揺れ（歩幅）
+   *   ・前傾（走り）
+   *   ・前への踏み込み（噛みつき）
+   * の三つで作る。位相 phase はゲーム層が速度に比例して進めている。
+   */
+  _updateSprites() {
+    if (!this.spriteMesh || !this.spriteList) return;
+    const gl = this.gl;
+    const F = this.spriteData;
+    const { AW, AH } = this.spriteUV;
+    const eye = this._eye();
+    let o = 0;
+
+    for (const { f, sp, slot: st } of this.spriteList) {
+      // 絵の横幅がその種の全長。ただし 1 ブロック（6m）は木立の中では数画素にしかならず、
+      // 6m の獣脚類が背景に沈む。小さい種にだけ下限を置いて、大きい種は実寸のままにする
+      // （下限を上げるのではなく倍率を掛けると、竜脚類が区画からはみ出す）
+      const wB = Math.max(SPRITE_MIN_W, f.size / VOX_M);
+      const hB = wB * (sp.h / sp.w), hw = wB / 2;
+
+      const state = f.state || 'idle';
+      const ph = f.phase || 0;
+      let bob = 0, lean = 0, lunge = 0, squash = 0;
+      if (state === 'walk') {
+        bob = Math.sin(ph * 2) * hB * 0.045;
+        lean = Math.sin(ph) * 0.05;
+      } else if (state === 'run') {
+        bob = Math.sin(ph * 2) * hB * 0.085;
+        lean = 0.17 + Math.sin(ph * 2) * 0.06;
+      } else if (state === 'attack') {
+        // 噛みつきは、沈んでから前へ出る
+        const t = Math.min(1, (f.lunge || 0) / 1.1);
+        const k = Math.sin(t * Math.PI);
+        lunge = k * wB * 0.42;
+        lean = 0.28 * k;
+        squash = -0.10 * k;
+      } else {
+        bob = Math.sin(ph * 0.7) * hB * 0.012;   // 息づかい
+        squash = Math.sin(ph * 0.7) * 0.012;
+      }
+      if (f.flying) { bob += Math.sin(ph * 1.5) * hB * 0.10; lean = Math.sin(ph * 1.5) * 0.10; }
+      if (f.swimming) { lean = Math.sin(ph) * 0.13; }
+
+      // 板の右方向（シェーダと同じ向き）と進む向きの内積で、絵を裏返すか決める。
+      // これをしないと、右へ歩いても左向きの絵のまま後ずさりして見える
+      const cxw = f.x + 0.5, czw = f.z + 0.5;
+      const tox = cxw - eye[0], toz = czw - eye[2];
+      const tl = Math.hypot(tox, toz) || 1;
+      const rx = -toz / tl, rz = tox / tl;
+      const facing = Math.cos(f.yaw) * rx + Math.sin(f.yaw) * rz;
+      const flip = facing < 0;
+
+      const cx = cxw + Math.cos(f.yaw) * lunge;
+      const cz = czw + Math.sin(f.yaw) * lunge;
+      const cy = f.y + bob;
+
+      let u0 = st.x / AW, u1 = (st.x + sp.w) / AW;
+      if (flip) { const t = u0; u0 = u1; u1 = t; }
+      const v1 = sp.h / AH;
+
+      // 足元を軸に傾ける。進む向きが画面の左右どちらかで倒れる側も変わる
+      const L = flip ? -lean : lean;
+      const cs = Math.cos(L), sn = Math.sin(L);
+      const top = hB * (1 + squash);
+      const put = (dx, dy, u, v) => {
+        F[o++] = cx; F[o++] = cy; F[o++] = cz;
+        F[o++] = dx * cs - dy * sn;
+        F[o++] = dx * sn + dy * cs;
+        F[o++] = u; F[o++] = v;
+      };
+      put(-hw, 0, u0, v1); put(hw, 0, u1, v1); put(hw, top, u1, 0);
+      put(-hw, 0, u0, v1); put(hw, top, u1, 0); put(-hw, top, u0, 0);
+    }
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteMesh.vb);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, F);
   }
 
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
@@ -703,6 +774,8 @@ export class VoxelRenderer {
     if (!this.ok || !this.scene) return;
     const gl = this.gl;
     this.time += dt * 0.001;
+    // 動物は毎フレーム居場所も姿も変わる。板だけ書き直す（地形は据え置き）
+    this._updateSprites();
     const s = this.scene;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.enable(gl.DEPTH_TEST);

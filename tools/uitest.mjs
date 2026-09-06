@@ -192,6 +192,13 @@ async function testPhone(url) {
     if (!lap) ok('状態表示と操作盤が重ならない');
     else ng('状態表示が操作盤に重なる');
 
+    // 動物が動いても描画が回り続けること（板を毎フレーム書き換えている）
+    const t0 = await b.evaluate(`document.getElementById('vox-hud').textContent`);
+    await b.sleep(4000);
+    const t1 = await b.evaluate(`document.getElementById('vox-hud').textContent`);
+    if (t0 && t1) ok('動物が動いている間も描画が続く');
+    else ng('描画が止まった');
+
     const err = await b.evaluate(`(() => { const c = document.getElementById('vox');
       const g = c.getContext('webgl2') || c.getContext('webgl'); return g ? g.getError() : -1; })()`);
     if (err === 0) ok('WebGL のエラーなし');

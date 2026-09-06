@@ -59,19 +59,46 @@ export async function enterScene(game, spot = null, opts = {}, onProgress = () =
  */
 const zi = (scene, x, z) => (z | 0) * scene.total + (x | 0);
 
+/** その地点の目線から相手が見えるか（地形に遮られていないか） */
+function canSee(scene, from, target) {
+  const ex = from.x, ey = from.y + PHYS.eye, ez = from.z;
+  const dx = target.x + 0.5 - ex, dy = target.y - ey, dz = target.z + 0.5 - ez;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 1) return true;
+  const hit = raycast(scene, [ex, ey, ez], [dx / len, dy / len, dz / len], len);
+  return !hit || hit.dist > len - 1.5;
+}
+
 export function findSpawn(scene, opts = {}) {
-  const { preferDry = true, maxSlope = 2 } = opts;
-  const c = Math.floor(scene.total / 2);
+  const { preferDry = true, maxSlope = 2, nearFauna = true } = opts;
+  // 区画は 2km 四方あり、真ん中に降りると群れが 300m 先ということが起きる。
+  // 降りた先で何も動いていないと世界が止まって見えるので、陸の群れの
+  // そばを起点にする（真上には出さないよう、少し離れた輪から探す）
+  let cx = Math.floor(scene.total / 2), cz = cx, rMin = 0, watch = null;
+  if (nearFauna && scene.fauna && scene.fauna.length) {
+    // 翼竜は 40m 上を飛ぶので、そばに降りても見上げないと目に入らない。
+    // 地を歩く種を優先し、居なければ空か水の種で妥協する
+    const walkers = scene.fauna.filter((f) => !f.swimming && !f.flying);
+    const land = walkers.length ? walkers : scene.fauna.filter((f) => !f.swimming);
+    if (land.length) {
+      const c0 = Math.floor(scene.total / 2);
+      const near = land.reduce((a, b) =>
+        Math.hypot(a.x - c0, a.z - c0) <= Math.hypot(b.x - c0, b.z - c0) ? a : b);
+      cx = Math.round(near.x); cz = Math.round(near.z); rMin = 9;
+      watch = near;
+    }
+  }
+  const c = cx;
   const step = Math.max(1, Math.floor(scene.cols / 48));
-  let fallback = null;
-  for (let r = 0; r < scene.cols; r += step) {
+  let fallback = null, loose = null;
+  for (let r = rMin; r < scene.cols; r += step) {
     for (let k = 0; k < Math.max(1, r * 4); k += step) {
       // 半径 r の正方リング上を歩く
       const t = r === 0 ? 0 : (k / Math.max(1, r * 4)) * 4;
       const side = Math.floor(t) % 4;
       const f = (t % 1) * 2 - 1;
       const x = c + Math.round(side === 0 ? r : side === 1 ? -f * r : side === 2 ? -r : f * r);
-      const z = c + Math.round(side === 0 ? f * r : side === 1 ? r : side === 2 ? -f * r : -r);
+      const z = cz + Math.round(side === 0 ? f * r : side === 1 ? r : side === 2 ? -f * r : -r);
       if (x < 2 || z < 2 || x >= scene.total - 2 || z >= scene.total - 2) continue;
       const h = columnTop(scene, x, z);
       const w = waterTop(scene, x, z);
@@ -94,10 +121,17 @@ export function findSpawn(scene, opts = {}) {
       if (!fallback) fallback = { x: x + 0.5, z: z + 0.5, y: Math.max(h, w === -Infinity ? h : w) };
       if (slope > maxSlope) continue;
       if (preferDry && !dry) continue;
-      return { x: x + 0.5, z: z + 0.5, y: h };
+      const here = { x: x + 0.5, z: z + 0.5, y: h };
+      // 生き物が地形の陰なら、そこは「近い」だけで何も見えない。
+      // 目線から視線が通る場所を探し、見つからなければ近さで妥協する
+      if (watch) {
+        if (!loose) loose = here;
+        if (!canSee(scene, here, watch)) continue;
+      }
+      return here;
     }
   }
-  return fallback || { x: c + 0.5, z: c + 0.5, y: columnTop(scene, c, c) };
+  return loose || fallback || { x: c + 0.5, z: cz + 0.5, y: columnTop(scene, c, cz) };
 }
 
 /** 1 本の柱の環境を問い合わせる（UI 表示にも AI の判断にも使える） */

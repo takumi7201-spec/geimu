@@ -16,6 +16,7 @@ import { sprite, setSprite, isOverridden, clearSprites } from './voxel/sprites.j
 import { trimSprite, checkSprite } from './voxel/spriteutil.js';
 import { Explorer } from './game/player.js';
 import { findSpawn, sampleColumn, faunaNear } from './game/api.js';
+import { stepFauna, initFauna } from './game/fauna.js';
 import { mulberry32, clamp } from './core/rng.js';
 
 const $ = (s) => document.querySelector(s);
@@ -211,6 +212,7 @@ async function descend(spot = null, variant = '') {
     label.textContent = 'ブロックを積んでいます';
     await new Promise((r) => requestAnimationFrame(() => r()));
     state.voxScene = scene;
+    initFauna(scene);      // 群れを動かせる形に整える
     state.voxSpot = target;
     state.voxDirty = false;
     vox.setScene(scene);
@@ -242,7 +244,13 @@ function setExplore(on) {
   state.explore = on;
   if (on) {
     const spawn = findSpawn(state.voxScene);
-    state.explorer = new Explorer(state.voxScene, spawn, { yaw: vox.cam.yaw, pitch: -0.1, invertY: PREF.invertY });
+    // 降りた向きが崖や幹だと、何も居ない壁を見て始めることになる。
+    // いちばん近い生き物のほうを向いておく（yaw は前進が (-sin, -cos) の系）
+    const near = faunaNear(state.voxScene, spawn.x, spawn.z, 140)[0];
+    const yaw = near
+      ? Math.atan2(-(near.x - spawn.x), -(near.z - spawn.z))
+      : vox.cam.yaw;
+    state.explorer = new Explorer(state.voxScene, spawn, { yaw, pitch: -0.1, invertY: PREF.invertY });
     vox.setFirstPerson(true);
     voxCanvas.classList.add('explore');
     hideInspector();
@@ -277,7 +285,7 @@ function updateVoxHud() {
   const s = state.voxScene;
   if (!st) return;
   const col = sampleColumn(s, st.x, st.z);
-  const near = faunaNear(s, st.x, st.z, 30)[0];
+  const near = faunaNear(s, st.x, st.z, 70)[0];
   const mode = st.flying ? '飛行' : st.submerged ? '潜水' : st.inWater ? '遊泳' : st.onGround ? '徒歩' : '落下';
   hud.innerHTML =
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
@@ -593,6 +601,9 @@ function voxLoop(t) {
   requestAnimationFrame(voxLoop);
   if (!vox || !vox.ok || !state.voxScene) return;
   const dt = voxLast ? (t - voxLast) / 1000 : 1 / 60;
+  // 動物は俯瞰でも動き続ける。見ている間だけなので、止まっていても困らない
+  const who = state.explorer && state.explorer.status();
+  stepFauna(state.voxScene, dt, who ? { x: who.x, z: who.z } : null);
   if (state.explore && state.explorer) {
     // 探索中は間引かない（間引くと視点がかくつき、当たり判定も粗くなる）
     const v = state.explorer.update(dt);
