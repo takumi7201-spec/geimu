@@ -375,7 +375,8 @@ export class GlobeRenderer {
 
   rotate(dx, dy) {
     this.cam.yaw += dx * 0.005;
-    this.cam.pitch = clamp(this.cam.pitch + dy * 0.005, -1.45, 1.45);
+    const s = this.invertY === false ? -1 : 1;
+    this.cam.pitch = clamp(this.cam.pitch + s * dy * 0.005, -1.45, 1.45);
   }
   zoom(factor) { this.cam.dist = clamp(this.cam.dist / factor, 1.55, 12); }
 

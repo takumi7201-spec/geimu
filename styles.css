@@ -209,3 +209,65 @@ button.mini.wide { width: 100%; padding: 7px; }
   position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
   color: var(--muted); font-size: 13px; padding: 40px; line-height: 2;
 }
+
+/* ---- スマホ：地図を主役にし、設定は下から引き出す ---- */
+#panel-toggle {
+  display: none;
+  position: fixed; right: 10px; top: 10px; z-index: 40;
+  background: rgba(12,18,32,0.86); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 14px; font: 600 12px/1 inherit;
+  backdrop-filter: blur(6px);
+}
+
+@media (max-width: 860px) {
+  /* 地図を上、設定を下に。畳めば全画面になる */
+  #app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  #stage { grid-row: 1; }
+  #sidebar { grid-row: 2; max-height: 46vh; }
+  #sidebar.collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; border: 0; }
+  #panel-toggle { display: block; }
+  /* 指で押せる大きさに */
+  .viewswitch button { padding: 12px 3px; font-size: 12px; }
+  .era-tabs button { padding: 11px 10px; }
+  #minimap-wrap { transform: scale(0.72); transform-origin: bottom left; }
+}
+
+/* ---- 探索モードのタッチ操作 ---- */
+#touch { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+#touch.hidden { display: none; }
+
+#stick {
+  position: absolute; left: 18px; bottom: 22px;
+  width: 122px; height: 122px; border-radius: 50%;
+  background: rgba(10,16,28,0.34); border: 2px solid rgba(190,214,240,0.34);
+  pointer-events: auto; touch-action: none;
+}
+#stick i {
+  position: absolute; left: 50%; top: 50%; width: 50px; height: 50px;
+  margin: -25px 0 0 -25px; border-radius: 50%;
+  background: rgba(206,226,248,0.60); border: 2px solid rgba(255,255,255,0.45);
+  transition: transform 0.06s linear;
+}
+#tbtns {
+  position: absolute; right: 16px; bottom: 22px;
+  display: grid; grid-template-columns: repeat(2, 66px); gap: 10px;
+  pointer-events: auto;
+}
+#tbtns button {
+  width: 66px; height: 66px; border-radius: 50%;
+  background: rgba(10,16,28,0.40); color: #eaf2ff;
+  border: 2px solid rgba(190,214,240,0.36);
+  font: 600 17px/1 "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  touch-action: none; -webkit-tap-highlight-color: transparent;
+}
+#tbtns button.on { background: rgba(120,190,255,0.46); border-color: rgba(220,240,255,0.7); }
+
+@media (max-width: 860px) {
+  /* 画面の下半分は操作盤の場所。状態表示は上へ逃がす */
+  #vox-hud { top: 12px; bottom: auto; left: 10px; right: 88px; font-size: 11px; }
+  #coords { display: none; }
+}
+
+/* 指で操作する面。ブラウザ自身のスクロールとズームに取られないようにする */
+#map, #globe, #vox { touch-action: none; }

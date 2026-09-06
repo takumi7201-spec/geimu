@@ -48,6 +48,25 @@ const state = {
 /** 現在の年代が属する紀（キーフレームちょうどでなくても近いほうを返す） */
 const currentEra = () => eraAtAge(state.ma);
 
+// ---------- 端末に憶えさせる操作の好み --------------------------------
+
+/** 指で操作する端末か。タッチ用の操作盤はここでだけ出す */
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
+const PREF = {
+  // 上下反転が既定。指で世界を掴んで動かす向きに揃える
+  get invertY() { try { return localStorage.getItem('mz.invertY') !== '0'; } catch { return true; } },
+  set invertY(v) { try { localStorage.setItem('mz.invertY', v ? '1' : '0'); } catch { /* 保存できなくても操作は効く */ } },
+};
+
+/** 視点の設定を、いま生きている描画側すべてに配る */
+function applyLookPref() {
+  const v = PREF.invertY;
+  if (vox) vox.invertY = v;
+  if (globe) globe.invertY = v;
+  if (state.explorer) state.explorer.invertY = v;
+}
+
 // ---------- UI の組み立て ----------------------------------------------
 
 function buildEraTabs() {
@@ -136,6 +155,7 @@ function setView(view) {
 
 function initGlobe() {
   globe = new GlobeRenderer(globeCanvas, globeOverlay);
+  applyLookPref();
   if (!globe.ok) {
     const box = document.createElement('div');
     box.id = 'gl-error';
@@ -150,6 +170,7 @@ function initGlobe() {
 
 function initVox() {
   vox = new VoxelRenderer(voxCanvas, voxOverlay);
+  applyLookPref();
   if (!vox.ok) {
     const box = document.createElement('div');
     box.id = 'gl-error';
@@ -213,7 +234,7 @@ function setExplore(on) {
   state.explore = on;
   if (on) {
     const spawn = findSpawn(state.voxScene);
-    state.explorer = new Explorer(state.voxScene, spawn, { yaw: vox.cam.yaw, pitch: -0.1 });
+    state.explorer = new Explorer(state.voxScene, spawn, { yaw: vox.cam.yaw, pitch: -0.1, invertY: PREF.invertY });
     vox.setFirstPerson(true);
     voxCanvas.classList.add('explore');
     hideInspector();
@@ -228,6 +249,15 @@ function setExplore(on) {
   }
   $('#vox-explore').textContent = on ? '探索モードを抜ける（E）' : '探索モードに入る（E）';
   $('#vox-hud').classList.toggle('hidden', !on);
+  // 操作盤は指の端末だけ。マウスでは邪魔にしかならない
+  $('#touch').classList.toggle('hidden', !(on && IS_TOUCH));
+  if (!on) resetStick();
+  // 狭い画面では設定が場所を食う。探索に入る間は畳んで全画面にする
+  if (on && matchMedia('(max-width: 860px)').matches) {
+    $('#sidebar').classList.add('collapsed');
+    $('#panel-toggle').textContent = '設定';
+    requestAnimationFrame(() => { resize(); draw(); });
+  }
   updateVoxHud();
   draw();
 }
@@ -245,7 +275,8 @@ function updateVoxHud() {
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
     `${mode}　${(st.speed * VOX_M).toFixed(0)} m/s　目線 ${Math.round(st.eyeM).toLocaleString()}m\n` +
     (near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）\n` : '') +
-    `<i>WASD 移動 / Space 跳ぶ / Shift 走る / V 飛行 / E 抜ける</i>`;
+    // 指の端末には操作盤が出ているので、キーの案内は場所の無駄にしかならない
+    (IS_TOUCH ? '' : `<i>WASD 移動 / Space 跳ぶ / Shift 走る / V 飛行 / E 抜ける</i>`);
 }
 
 function buildVoxPlace() {
@@ -317,6 +348,17 @@ const LAYER_LABELS = {
 const LAYER_3D = { ocean: '海面', atmosphere: '大気' };
 const LAYER_VOX = { water: '水面', plants: '植生', fauna: '動物', labels: '名前', fog: '霞' };
 
+/** 視点の反転。レイヤではないが、操作を変えたい人が最初に探すのはここ */
+function addLookToggle(box) {
+  const l = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = PREF.invertY;
+  cb.onchange = () => { PREF.invertY = cb.checked; applyLookPref(); };
+  l.append(cb, document.createTextNode('視点の上下を反転'));
+  box.appendChild(l);
+}
+
 function buildToggles() {
   const box = $('#toggles');
   box.innerHTML = '';
@@ -330,6 +372,7 @@ function buildToggles() {
       l.append(cb, document.createTextNode(label));
       box.appendChild(l);
     }
+    addLookToggle(box);
     return;
   }
   const labels = state.view === '3d' ? { ...LAYER_LABELS, ...LAYER_3D } : LAYER_LABELS;
@@ -356,8 +399,8 @@ function buildToggles() {
     l.append(cb, document.createTextNode('自転'));
     box.appendChild(l);
   }
+  if (state.view === '3d') addLookToggle(box);
 }
-
 function buildLegend() {
   const box = $('#legend');
   box.innerHTML = '';
@@ -593,12 +636,14 @@ function drawMinimap() {
 let drag = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (!state.world) return;
-  canvas.setPointerCapture(e.pointerId);
+  // 二本目の指では捕捉に失敗することがある。落とすとドラッグ状態が壊れる
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
   drag = { x: e.clientX, y: e.clientY, moved: 0 };
   canvas.classList.add('dragging');
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!state.world) return;
+  if (pinching(canvas)) { drag = null; return; }   // 二本指はズームに譲る
   const dpr = renderer.dpr || 1;
   if (drag) {
     const dx = (e.clientX - drag.x) * dpr, dy = (e.clientY - drag.y) * dpr;
@@ -629,12 +674,14 @@ canvas.addEventListener('wheel', (e) => {
 let gdrag = null;
 globeCanvas.addEventListener('pointerdown', (e) => {
   if (!globe || !globe.ok) return;
-  globeCanvas.setPointerCapture(e.pointerId);
+  // 二本目の指では捕捉に失敗することがある。落とすとドラッグ状態が壊れる
+  try { globeCanvas.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
   gdrag = { x: e.clientX, y: e.clientY, moved: 0 };
   globeCanvas.classList.add('dragging');
 });
 globeCanvas.addEventListener('pointermove', (e) => {
   if (!globe || !globe.ok) return;
+  if (pinching(globeCanvas)) { gdrag = null; return; }
   if (gdrag) {
     const dpr = renderer.dpr || 1;
     const dx = (e.clientX - gdrag.x) * dpr, dy = (e.clientY - gdrag.y) * dpr;
@@ -674,6 +721,7 @@ voxCanvas.addEventListener('pointerdown', (e) => {
 });
 voxCanvas.addEventListener('pointermove', (e) => {
   if (!vox || !vox.ok || !state.voxScene) return;
+  if (pinching(voxCanvas)) { vdrag = null; return; }
   if (vdrag) {
     const dx = e.clientX - vdrag.x, dy = e.clientY - vdrag.y;
     vdrag.moved += Math.abs(dx) + Math.abs(dy);
@@ -1024,3 +1072,161 @@ buildToggles();
 window.addEventListener('resize', resize);
 resize();
 regenerate();
+
+// ---------- 指で遊ぶための操作盤 ---------------------------------------
+// スティックとボタンはキー入力と同じ道（Explorer.key）に流す。
+// 別経路にすると、押しっぱなしの解除や飛行の切り替えを二重に持つことになる。
+
+const STICK_KEYS = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' };
+let stickOn = new Set();
+let stickId = null;
+
+function resetStick() {
+  const knob = document.querySelector('#stick i');
+  if (knob) knob.style.transform = '';
+  for (const code of stickOn) state.explorer?.key(code, false);
+  stickOn = new Set();
+  stickId = null;
+}
+
+/** いま倒れている向きだけを押し、離れた向きは戻す */
+function stickSet(next) {
+  for (const c of stickOn) if (!next.has(c)) state.explorer?.key(c, false);
+  for (const c of next) if (!stickOn.has(c)) state.explorer?.key(c, true);
+  stickOn = next;
+}
+
+{
+  const pad = $('#stick');
+  const knob = pad.querySelector('i');
+  const R = 34;        // つまみが動ける半径
+  const DEAD = 11;     // ここまでは止まったまま（指を置いただけで歩き出さない）
+
+  const move = (e) => {
+    const r = pad.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const len = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, R / len);
+    knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+    const next = new Set();
+    if (len > DEAD) {
+      // 斜めも出せるよう、軸ごとに独立して見る
+      if (dy < -DEAD * 0.6) next.add(STICK_KEYS.up);
+      if (dy > DEAD * 0.6) next.add(STICK_KEYS.down);
+      if (dx < -DEAD * 0.6) next.add(STICK_KEYS.left);
+      if (dx > DEAD * 0.6) next.add(STICK_KEYS.right);
+    }
+    stickSet(next);
+  };
+
+  pad.addEventListener('pointerdown', (e) => {
+    stickId = e.pointerId;
+    try { pad.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
+    move(e);
+    e.preventDefault();
+  });
+  pad.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== stickId) return;
+    move(e);
+    e.preventDefault();
+  });
+  const end = (e) => { if (e.pointerId === stickId) resetStick(); };
+  pad.addEventListener('pointerup', end);
+  pad.addEventListener('pointercancel', end);
+  pad.addEventListener('lostpointercapture', end);
+}
+
+{
+  const ACT = { jump: 'Space', run: 'ShiftLeft' };
+  for (const b of document.querySelectorAll('#tbtns button')) {
+    const act = b.dataset.act;
+    if (act === 'exit') {
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); setExplore(false); });
+      continue;
+    }
+    if (act === 'fly') {
+      // 飛行は押した瞬間に切り替わる。押しっぱなしにすると往復してしまう
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        state.explorer?.key('KeyV', true);
+        state.explorer?.key('KeyV', false);
+        b.classList.toggle('on', !!state.explorer?.flying);
+      });
+      continue;
+    }
+    const code = ACT[act];
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try { b.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても押下は効く */ }
+      b.classList.add('on');
+      state.explorer?.key(code, true);
+    });
+    const up = () => { b.classList.remove('on'); state.explorer?.key(code, false); };
+    b.addEventListener('pointerup', up);
+    b.addEventListener('pointercancel', up);
+    b.addEventListener('lostpointercapture', up);
+  }
+}
+
+// 設定は畳んで地図を広く使う。畳んだあとは canvas の実寸が変わるので測り直す
+$('#panel-toggle').addEventListener('click', () => {
+  const sb = $('#sidebar');
+  const hid = sb.classList.toggle('collapsed');
+  $('#panel-toggle').textContent = hid ? '設定' : '閉じる';
+  requestAnimationFrame(() => { resize(); draw(); });
+});
+
+// ---------- 二本指でズーム ----------------------------------------------
+// スマホにはホイールが無い。指の開き具合をそのまま倍率にする。
+// ドラッグ側は pinching() を見て手を引く（同時に効くと画面が跳ねる）。
+
+const pinchState = new WeakMap();
+
+function pinching(el) {
+  const st = pinchState.get(el);
+  return !!st && st.pts.size >= 2;
+}
+
+function enablePinch(el, onZoom) {
+  const st = { pts: new Map(), base: 0 };
+  pinchState.set(el, st);
+  const span = () => {
+    const [a, b] = [...st.pts.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  el.addEventListener('pointerdown', (e) => {
+    st.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (st.pts.size === 2) st.base = span();
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!st.pts.has(e.pointerId)) return;
+    st.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (st.pts.size !== 2) return;
+    const now = span();
+    // 指が重なった瞬間は倍率が飛ぶので、ある程度離れているときだけ効かせる
+    if (st.base > 6 && now > 6) {
+      const [a, b] = [...st.pts.values()];
+      onZoom(now / st.base, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      draw();
+    }
+    st.base = now;
+    e.preventDefault();
+  });
+  const drop = (e) => {
+    st.pts.delete(e.pointerId);
+    st.base = st.pts.size === 2 ? span() : 0;
+  };
+  el.addEventListener('pointerup', drop);
+  el.addEventListener('pointercancel', drop);
+  el.addEventListener('pointerleave', drop);
+}
+
+enablePinch(canvas, (f, mx, my) => {
+  if (!state.world) return;
+  const r = canvas.getBoundingClientRect();
+  const dpr = renderer.dpr || 1;
+  renderer.zoomAt((mx - r.left) * dpr, (my - r.top) * dpr, f);
+});
+enablePinch(globeCanvas, (f) => { if (globe && globe.ok) globe.zoom(f); });
+enablePinch(voxCanvas, (f) => { if (vox && vox.ok && !state.explore) vox.zoom(f); });

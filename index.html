@@ -16,6 +16,7 @@
 </head>
 <body>
 <div id="app">
+  <button id="panel-toggle" aria-label="設定を開閉">設定</button>
   <aside id="sidebar">
     <header class="brand">
       <h1>中生代<span>ワールドマップ</span></h1>
@@ -116,6 +117,15 @@
     <div id="minimap-wrap"><canvas id="minimap" width="240" height="120"></canvas></div>
     <div id="inspector" class="hidden"></div>
     <div id="vox-hud" class="hidden"></div>
+    <div id="touch" class="hidden">
+      <div id="stick"><i></i></div>
+      <div id="tbtns">
+        <button data-act="jump">跳</button>
+        <button data-act="run">走</button>
+        <button data-act="fly">飛</button>
+        <button data-act="exit">出</button>
+      </div>
+    </div>
     <div id="progress" class="hidden"><div class="bar"><i></i></div><span></span></div>
     <div id="coords"></div>
   </main>

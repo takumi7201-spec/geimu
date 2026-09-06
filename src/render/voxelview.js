@@ -587,7 +587,8 @@ export class VoxelRenderer {
   rotate(dx, dy) {
     if (this.firstPerson) return;      // 一人称の視線は Explorer 側が持つ
     this.cam.yaw -= dx * 0.005;
-    this.cam.pitch = clamp(this.cam.pitch + dy * 0.004, -1.35, 0.35);
+    const s = this.invertY === false ? -1 : 1;
+    this.cam.pitch = clamp(this.cam.pitch + s * dy * 0.004, -1.35, 0.35);
   }
   zoom(f) {
     if (this.firstPerson) return;

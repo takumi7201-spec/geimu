@@ -27,6 +27,8 @@ export class Explorer {
     this.yaw = opts.yaw ?? 0.9;
     this.pitch = opts.pitch ?? -0.15;
     this.sensitivity = opts.sensitivity ?? 0.0022;
+    // 上下を反転（既定）。指で世界を掴んで動かす向きになり、俯瞰の操作とも揃う
+    this.invertY = opts.invertY ?? true;
     this.binding = { ...DEFAULT_KEYS, ...(opts.keys || {}) };
     this.setScene(scene, spawn);
   }
@@ -57,7 +59,8 @@ export class Explorer {
   look(dx, dy) {
     this.yaw -= dx * this.sensitivity;
     // 真上・真下は詰まるので少し手前で止める
-    this.pitch = clamp(this.pitch - dy * this.sensitivity, -1.45, 1.45);
+    const s = this.invertY ? 1 : -1;
+    this.pitch = clamp(this.pitch + s * dy * this.sensitivity, -1.45, 1.45);
   }
 
   toggleFly() {
