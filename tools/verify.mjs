@@ -11,6 +11,8 @@ import { buildRegions, buildLandmarks } from '../src/world/regions.js';
 import { BIOMES } from '../src/world/biomes.js';
 import { ERAS } from '../src/world/eras.js';
 import { eraAtAge, AGE_MIN, AGE_MAX } from '../src/world/timeline.js';
+import { buildVoxelScene, pickScenicSpot, WATER_NONE } from '../src/voxel/scene.js';
+import { VOX_M, BLOCKS, groundOf } from '../src/voxel/blocks.js';
 
 const argSeeds = Number((process.argv.find((a, i) => process.argv[i - 1] === '--seeds') || 4));
 const SEEDS = ['pangaea', 'tethys', 'gondwana', 'panthalassa', 'laurasia', 'deccan'].slice(0, Math.max(2, argSeeds));
@@ -146,6 +148,88 @@ console.log('\n[年代軸]');
     if (lands[i] > lands[i - 1] + 0.02) fail(`陸地率が時代とともに増えている（${lands.map((v) => (v * 100).toFixed(1)).join(' → ')}）`);
   }
   pass(`海進の傾向：陸地率 ${lands.map((v) => (v * 100).toFixed(1) + '%').join(' → ')}`);
+}
+
+// ---- 4. 地表ボクセル ---------------------------------------------------
+console.log('\n[地表ボクセル]');
+{
+  const w = await generateWorld({ seed: 'pangaea', ma: 160, size: 'small' });
+  const regions = buildRegions(w);
+  const marks = buildLandmarks(w, regions);
+
+  // 決定性
+  const spot = pickScenicSpot(w, marks, 'verify');
+  const a = await buildVoxelScene(w, { x: spot.x, y: spot.y, size: 'small' });
+  const b = await buildVoxelScene(w, { x: spot.x, y: spot.y, size: 'small' });
+  let diff = 0;
+  for (let i = 0; i < a.height.length; i++) if (a.height[i] !== b.height[i] || a.surf[i] !== b.surf[i]) diff++;
+  if (diff) fail(`ボクセル区画が同じ入力で再現されない（${diff} 列）`);
+  else if (a.props.length !== b.props.length || a.fauna.length !== b.fauna.length) fail('植物・動物の配置が再現されない');
+  else pass('決定性：同じ地点からは同じ区画が組み上がる');
+
+  // 複数の地点で健全性を見る
+  let inlandWater = 0, sceneCount = 0, landScenes = 0;
+  for (const variant of ['a', 'b', 'c', 'd', 'e']) {
+    const p = pickScenicSpot(w, marks, variant);
+    const s = await buildVoxelScene(w, { x: p.x, y: p.y, size: 'small', variant });
+    sceneCount++;
+    const tag = `区画 ${variant}`;
+
+    // 値の健全性
+    let bad = 0, wet = 0, land = 0, floating = 0;
+    for (let i = 0; i < s.height.length; i++) {
+      const hb = s.height[i], wl = s.water[i];
+      if (!Number.isFinite(hb) || Math.abs(hb) > 4000) bad++;
+      if (wl !== WATER_NONE) {
+        wet++;
+        // 水面は必ず地面より上にある（下にあると地面の中に水が埋まる）
+        if (wl <= hb) floating++;
+      } else land++;
+      if (!BLOCKS[s.surf[i]]) bad++;
+    }
+    if (bad) fail(`${tag}: 標高または地表ブロックが不正な列が ${bad} 本`);
+    if (floating) fail(`${tag}: 地面の中に埋まった水面が ${floating} 列`);
+    if (wet / s.height.length > 0.985) fail(`${tag}: 区画がほぼ全面水没している`);
+    if (land / s.height.length > 0.02) landScenes++;
+
+    // 陸の草木が水に沈んでいない／翼竜は地面より上を飛ぶ
+    let drowned = 0;
+    for (const pr of s.props) {
+      const i = pr.z * s.total + pr.x;
+      const wl = s.water[i];
+      const underwater = wl !== WATER_NONE && wl > s.height[i];
+      const kindIsWater = ['coral', 'algae'].includes(s.models[pr.m].kind);
+      if (underwater && !kindIsWater && pr.y <= wl - 2) drowned++;
+    }
+    if (drowned > s.props.length * 0.02) fail(`${tag}: 水没した陸生植物が ${drowned} 株`);
+    for (const f of s.fauna) {
+      const i = f.z * s.total + f.x;
+      if (f.y < s.height[i]) fail(`${tag}: ${f.name} が地面に埋まっている`);
+    }
+    if (s.fauna.length > 60) fail(`${tag}: 動物が ${s.fauna.length} 頭と多すぎる`);
+
+    // 起伏：真っ平らな板になっていない
+    let lo = 1e9, hi = -1e9;
+    for (let i = 0; i < s.height.length; i++) { if (s.height[i] < lo) lo = s.height[i]; if (s.height[i] > hi) hi = s.height[i]; }
+    const relief = (hi - lo) * VOX_M;
+    if (relief < 25) fail(`${tag}: 標高差が ${relief}m しかなく、地形が平板`);
+    if (relief > 6000) fail(`${tag}: 標高差 ${relief}m は 3km 四方の起伏として過大`);
+
+    let inland = 0;
+    for (let i = 0; i < s.height.length; i++) if (s.height[i] > 0 && s.water[i] !== WATER_NONE) inland++;
+    if (inland > s.height.length * 0.002) inlandWater++;
+
+    console.log(`  · ${variant}  ${s.total}²  標高差 ${relief.toLocaleString()}m  水面 ${(wet / s.height.length * 100).toFixed(0)}%  ` +
+      `植物 ${s.props.length}  動物 ${s.fauna.length}  ${s.meta.biomes.slice(0, 2).map((x) => BIOMES[x.id].name).join('/')}`);
+  }
+  if (landScenes === 0) fail('陸を含む区画が一つも作られない');
+  if (!inlandWater) fail('河川も湖もある区画が一つも無い（水系が機能していない）');
+  else pass(`${sceneCount} 区画中 ${inlandWater} 区画に河川・湖がある`);
+
+  // 乾燥地の植生は森より薄い
+  const veg = (id) => groundOf(id).veg;
+  if (!(veg('desert') < veg('araucaria') * 0.3)) fail('砂漠の植生密度が森と変わらない');
+  else pass('植生密度：砂漠 < 森');
 }
 
 console.log('');

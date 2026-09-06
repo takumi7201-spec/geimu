@@ -8,15 +8,21 @@ import { BIOMES, BIOME_IDS, toMeters } from './world/biomes.js';
 import { FAUNA, FLORA, faunaFor } from './world/fauna.js';
 import { MapRenderer, VIEW_MODES } from './render/renderer.js';
 import { GlobeRenderer } from './render/globe.js';
+import { VoxelRenderer } from './render/voxelview.js';
+import { buildVoxelScene, pickScenicSpot, SCENE_SIZES, WATER_NONE } from './voxel/scene.js';
+import { BLOCKS, VOX_M } from './voxel/blocks.js';
 import { mulberry32, clamp } from './core/rng.js';
 
 const $ = (s) => document.querySelector(s);
 const canvas = $('#map');
 const globeCanvas = $('#globe');
 const globeOverlay = $('#globe-overlay');
+const voxCanvas = $('#vox');
+const voxOverlay = $('#vox-overlay');
 
 const renderer = new MapRenderer(canvas);
 let globe = null;
+let vox = null;
 
 const state = {
   ma: 160,            // 百万年前。これが世界の唯一の時間軸
@@ -28,6 +34,11 @@ const state = {
   marks: [],
   busy: false,
   spin: false,
+  // 地表ビュー（ボクセル）
+  voxScene: null,
+  voxSpot: null,
+  voxSize: 'medium',
+  voxDirty: true,
 };
 
 /** 現在の年代が属する紀（キーフレームちょうどでなくても近いほうを返す） */
@@ -99,14 +110,23 @@ function setView(view) {
   state.view = view;
   for (const b of $('#viewswitch').children) b.classList.toggle('on', b.dataset.view === view);
   const is3d = view === '3d';
-  canvas.classList.toggle('hidden', is3d);
+  const isVox = view === 'pixel';
+  canvas.classList.toggle('hidden', view !== '2d');
   globeCanvas.classList.toggle('hidden', !is3d);
   globeOverlay.classList.toggle('hidden', !is3d);
-  $('#minimap-wrap').style.display = is3d ? 'none' : '';
+  voxCanvas.classList.toggle('hidden', !isVox);
+  voxOverlay.classList.toggle('hidden', !isVox);
+  $('#vox-panel').classList.toggle('hidden', !isVox);
+  $('#minimap-wrap').style.display = view === '2d' ? '' : 'none';
   if (is3d && !globe) initGlobe();
+  if (isVox && !vox) initVox();
+  hideInspector();
   buildToggles();
+  buildStats();
   resize();
-  draw();
+  if (isVox) startVoxLoop();
+  if (isVox && vox && vox.ok && (state.voxDirty || !state.voxScene)) descend(state.voxSpot);
+  else draw();
 }
 
 function initGlobe() {
@@ -121,6 +141,89 @@ function initGlobe() {
   globe.setMode(renderer.mode);
   for (const [k, v] of Object.entries(renderer.layers)) globe.setLayer(k, v);
   if (state.world) globe.setWorld(state.world, state.regions, state.marks);
+}
+
+function initVox() {
+  vox = new VoxelRenderer(voxCanvas, voxOverlay);
+  if (!vox.ok) {
+    const box = document.createElement('div');
+    box.id = 'gl-error';
+    box.textContent = `地表ビューを開始できませんでした：${vox.error || 'WebGL 非対応'}`;
+    $('#stage').appendChild(box);
+    return;
+  }
+  vox.layers.labels = renderer.layers.labels;
+  vox.pixelSize = Number($('#vox-pixel').value) || 3;
+}
+
+/**
+ * 世界の一区画に降りてボクセル地形を組む。
+ * spot を省くと、河口や海岸など見応えのある場所を自動で選ぶ。
+ */
+async function descend(spot = null, variant = '') {
+  if (!state.world || !vox || !vox.ok || state.busy) return;
+  state.busy = true;
+  const prog = $('#progress');
+  prog.classList.remove('hidden');
+  const bar = prog.querySelector('i');
+  const label = prog.querySelector('span');
+  try {
+    const target = spot || pickScenicSpot(state.world, state.marks, variant);
+    const scene = await buildVoxelScene(
+      state.world,
+      { x: target.x, y: target.y, size: state.voxSize, from: target.from, variant },
+      (p, msg) => { bar.style.width = `${(p * 100).toFixed(1)}%`; label.textContent = msg; },
+    );
+    label.textContent = 'ブロックを積んでいます';
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    state.voxScene = scene;
+    state.voxSpot = target;
+    state.voxDirty = false;
+    vox.setScene(scene);
+    buildVoxPlace();
+    buildStats();
+    draw();
+  } catch (err) {
+    label.textContent = `地表の生成に失敗しました: ${err.message}`;
+    console.error(err);
+    await new Promise((r) => setTimeout(r, 2500));
+  } finally {
+    prog.classList.add('hidden');
+    state.busy = false;
+  }
+}
+
+function buildVoxPlace() {
+  const box = $('#vox-place');
+  const s = state.voxScene;
+  if (!s) { box.innerHTML = '<b>—</b>まだ降りていません'; return; }
+  const m = s.meta;
+  const ns = m.lat >= 0 ? '北緯' : '南緯';
+  const ew = m.lon >= 0 ? '東経' : '西経';
+  const top = m.biomes.map((b) => `${BIOMES[b.id].name} ${(b.share * 100).toFixed(0)}%`).join(' / ');
+  box.innerHTML =
+    `<b>${m.from ? m.from + ' 周辺' : `${ns}${Math.abs(m.lat).toFixed(1)}° ${ew}${Math.abs(m.lon).toFixed(1)}°`}</b>` +
+    `${Math.round(s.era.ma)} 百万年前・${s.era.name}<br>` +
+    `<i>${top}</i><br>` +
+    `${(m.spanM / 1000).toFixed(1)} km 四方 / 1 ブロック ${VOX_M} m`;
+}
+
+function buildVoxControls() {
+  const sel = $('#vox-size');
+  sel.innerHTML = '';
+  for (const [k, v] of Object.entries(SCENE_SIZES)) {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = v.label;
+    if (k === state.voxSize) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => { state.voxSize = sel.value; descend(state.voxSpot); };
+  $('#vox-pixel').onchange = (e) => {
+    if (vox) vox.pixelSize = Number(e.target.value) || 3;
+    resize();
+    draw();
+  };
+  $('#vox-reroll').onclick = () => descend(null, String(Math.random()).slice(2, 7));
 }
 
 function buildSizes() {
@@ -156,10 +259,23 @@ const LAYER_LABELS = {
   marks: '名所', grid: '経緯線', borders: '海岸線',
 };
 const LAYER_3D = { ocean: '海面', atmosphere: '大気' };
+const LAYER_VOX = { water: '水面', plants: '植生', fauna: '動物', labels: '名前', fog: '霞' };
 
 function buildToggles() {
   const box = $('#toggles');
   box.innerHTML = '';
+  if (state.view === 'pixel') {
+    for (const [k, label] of Object.entries(LAYER_VOX)) {
+      const l = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = vox ? vox.layers[k] : true;
+      cb.onchange = () => { if (vox && vox.ok) vox.setLayer(k, cb.checked); draw(); };
+      l.append(cb, document.createTextNode(label));
+      box.appendChild(l);
+    }
+    return;
+  }
   const labels = state.view === '3d' ? { ...LAYER_LABELS, ...LAYER_3D } : LAYER_LABELS;
   for (const [k, label] of Object.entries(labels)) {
     if (state.view === '3d' && k === 'grid') continue;
@@ -227,6 +343,29 @@ function buildStats() {
   const box = $('#stats');
   const w = state.world;
   if (!w) { box.innerHTML = ''; return; }
+  if (state.view === 'pixel' && state.voxScene) {
+    const s = state.voxScene;
+    const m = s.meta;
+    let lo = 1e9, hi = -1e9, wet = 0;
+    for (let i = 0; i < s.height.length; i++) {
+      if (s.height[i] < lo) lo = s.height[i];
+      if (s.height[i] > hi) hi = s.height[i];
+      if (s.water[i] !== WATER_NONE) wet++;
+    }
+    const rows = [
+      ['年代', `${Math.round(s.era.ma)} 百万年前`],
+      ['区画', `${(m.spanM / 1000).toFixed(1)} km 四方`],
+      ['ブロック', `${VOX_M} m 角 / ${s.total.toLocaleString()}²`],
+      ['標高差', `${((hi - lo) * VOX_M).toLocaleString()} m`],
+      ['最高地点', `${(hi * VOX_M).toLocaleString()} m`],
+      ['水面', `${((wet / s.height.length) * 100).toFixed(0)} %`],
+      ['植物', `${m.propCount.toLocaleString()} 株`],
+      ['動物', `${m.faunaCount} 頭`],
+      ['ポリゴン', vox && vox.stats ? `${Math.round(vox.stats.quads / 1000)} k 面` : '—'],
+    ];
+    box.innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    return;
+  }
   const s = w.stats;
   const continents = state.regions.landmasses.filter((l) => l.kind === 'continent').length;
   const islands = state.regions.landmasses.length - continents;
@@ -276,10 +415,17 @@ async function regenerate() {
       await new Promise((r) => requestAnimationFrame(() => r()));
       globe.setWorld(world, regions, marks);
     }
+    state.voxDirty = true;
+    state.voxSpot = null;
     buildEraTabs();
     buildLegend();
     buildStats();
     hideInspector();
+    if (state.view === 'pixel' && vox && vox.ok) {
+      prog.classList.add('hidden');
+      state.busy = false;
+      await descend(null);
+    }
     draw();
   } catch (err) {
     label.textContent = `生成に失敗しました: ${err.message}`;
@@ -297,12 +443,18 @@ async function regenerate() {
 function resize() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const r = $('#stage').getBoundingClientRect();
-  for (const c of [canvas, globeCanvas, globeOverlay]) {
+  for (const c of [canvas, globeCanvas, globeOverlay, voxOverlay]) {
     c.width = Math.max(320, Math.round(r.width * dpr));
     c.height = Math.max(240, Math.round(r.height * dpr));
     c.style.width = `${r.width}px`;
     c.style.height = `${r.height}px`;
   }
+  // 地表ビューだけは内部解像度を落として描く（CSS 側で nearest 拡大される）
+  const px = vox ? vox.pixelSize : 3;
+  voxCanvas.width = Math.max(160, Math.round((r.width * dpr) / px));
+  voxCanvas.height = Math.max(120, Math.round((r.height * dpr) / px));
+  voxCanvas.style.width = `${r.width}px`;
+  voxCanvas.style.height = `${r.height}px`;
   renderer.dpr = dpr;
   if (state.world) { renderer.clampCam(); draw(); }
 }
@@ -314,11 +466,32 @@ function draw() {
     frame = 0;
     if (state.view === '3d') {
       if (globe && globe.ok) globe.render();
+    } else if (state.view === 'pixel') {
+      if (vox && vox.ok) vox.render(16);
     } else {
       renderer.render();
       drawMinimap();
     }
   });
+}
+
+// 地表ビューは水面が揺れるので、表示中だけ回し続ける。
+// 30fps に間引いて、ドット絵の見た目を保ちつつ負荷を抑える。
+// 他の表示に切り替えたらループは自分で止まる（rAF を回し続けない）
+let voxLast = 0;
+let voxRunning = false;
+function voxLoop(t) {
+  if (state.view !== 'pixel') { voxRunning = false; return; }
+  requestAnimationFrame(voxLoop);
+  if (!vox || !vox.ok || !state.voxScene) return;
+  if (t - voxLast < 32) return;
+  vox.render(t - voxLast);
+  voxLast = t;
+}
+function startVoxLoop() {
+  if (voxRunning) return;
+  voxRunning = true;
+  requestAnimationFrame(voxLoop);
 }
 
 function spinLoop() {
@@ -420,6 +593,49 @@ globeCanvas.addEventListener('wheel', (e) => {
   draw();
 }, { passive: false });
 
+// ---------- 操作：地表ボクセル -------------------------------------------
+
+let vdrag = null;
+voxCanvas.addEventListener('pointerdown', (e) => {
+  if (!vox || !vox.ok) return;
+  voxCanvas.setPointerCapture(e.pointerId);
+  vdrag = { x: e.clientX, y: e.clientY, moved: 0 };
+  voxCanvas.classList.add('dragging');
+});
+voxCanvas.addEventListener('pointermove', (e) => {
+  if (!vox || !vox.ok || !state.voxScene) return;
+  if (vdrag) {
+    const dx = e.clientX - vdrag.x, dy = e.clientY - vdrag.y;
+    vdrag.moved += Math.abs(dx) + Math.abs(dy);
+    vdrag.x = e.clientX; vdrag.y = e.clientY;
+    vox.rotate(dx, dy);
+    draw();
+  }
+  updateVoxCoords(voxPoint(e));
+});
+voxCanvas.addEventListener('pointerup', (e) => {
+  voxCanvas.classList.remove('dragging');
+  const wasClick = vdrag && vdrag.moved < 5;
+  vdrag = null;
+  if (wasClick) inspectVoxel(vox.pick(...voxPoint(e)));
+});
+voxCanvas.addEventListener('pointerleave', () => { vdrag = null; voxCanvas.classList.remove('dragging'); });
+voxCanvas.addEventListener('wheel', (e) => {
+  if (!vox || !vox.ok) return;
+  e.preventDefault();
+  vox.zoom(Math.exp(-e.deltaY * 0.0016));
+  draw();
+}, { passive: false });
+
+/** 画面座標をボクセルキャンバスの内部解像度に合わせる（縮小して描いているため） */
+function voxPoint(e) {
+  const r = voxCanvas.getBoundingClientRect();
+  return [
+    ((e.clientX - r.left) / r.width) * voxCanvas.width,
+    ((e.clientY - r.top) / r.height) * voxCanvas.height,
+  ];
+}
+
 mini.addEventListener('pointerdown', (e) => {
   if (!state.world) return;
   const r = mini.getBoundingClientRect();
@@ -442,7 +658,18 @@ window.addEventListener('keydown', (e) => {
     case '1': setAge(230, true); break;
     case '2': setAge(160, true); break;
     case '3': setAge(90, true); break;
-    case 'g': setView(state.view === '2d' ? '3d' : '2d'); break;
+    case 'g': {
+      const order = ['2d', '3d', 'pixel'];
+      setView(order[(order.indexOf(state.view) + 1) % order.length]);
+      break;
+    }
+    case 'n': if (state.view === 'pixel') descend(null, String(Math.random()).slice(2, 7)); break;
+    case 'w': case 'a': case 's': case 'd':
+      if (state.view !== 'pixel' || !vox || !vox.ok) return;
+      vox.move(e.key.toLowerCase() === 'w' ? 1 : e.key.toLowerCase() === 's' ? -1 : 0,
+               e.key.toLowerCase() === 'd' ? 1 : e.key.toLowerCase() === 'a' ? -1 : 0);
+      draw();
+      break;
     case 'r': regenerate(); break;
     case ' ':
       if (state.view === '3d') { state.spin = !state.spin; buildToggles(); if (state.spin) spinLoop(); }
@@ -454,18 +681,35 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'f':
       if (state.view === '3d') { globe.cam.dist = 4.0; globe.cam.pitch = -0.15; }
+      else if (state.view === 'pixel') { if (vox && vox.ok) vox.resetCamera(); }
       else renderer.fit(renderer.cam.zoom <= (renderer.minZoom / 0.85) * 1.01);
       draw();
       break;
-    case 'arrowleft': state.view === '3d' ? globe.rotate(-step, 0) : renderer.pan(step, 0); draw(); break;
-    case 'arrowright': state.view === '3d' ? globe.rotate(step, 0) : renderer.pan(-step, 0); draw(); break;
-    case 'arrowup': state.view === '3d' ? globe.rotate(0, -step) : renderer.pan(0, step); draw(); break;
-    case 'arrowdown': state.view === '3d' ? globe.rotate(0, step) : renderer.pan(0, -step); draw(); break;
+    case 'arrowleft':
+      if (state.view === 'pixel') vox.rotate(-step, 0);
+      else if (state.view === '3d') globe.rotate(-step, 0); else renderer.pan(step, 0);
+      draw(); break;
+    case 'arrowright':
+      if (state.view === 'pixel') vox.rotate(step, 0);
+      else if (state.view === '3d') globe.rotate(step, 0); else renderer.pan(-step, 0);
+      draw(); break;
+    case 'arrowup':
+      if (state.view === 'pixel') vox.move(1, 0);
+      else if (state.view === '3d') globe.rotate(0, -step); else renderer.pan(0, step);
+      draw(); break;
+    case 'arrowdown':
+      if (state.view === 'pixel') vox.move(-1, 0);
+      else if (state.view === '3d') globe.rotate(0, step); else renderer.pan(0, -step);
+      draw(); break;
     case '+': case '=':
-      state.view === '3d' ? globe.zoom(1.2) : renderer.zoomAt(canvas.width / 2, canvas.height / 2, 1.25);
+      if (state.view === 'pixel') vox.zoom(1.2);
+      else if (state.view === '3d') globe.zoom(1.2);
+      else renderer.zoomAt(canvas.width / 2, canvas.height / 2, 1.25);
       draw(); break;
     case '-':
-      state.view === '3d' ? globe.zoom(1 / 1.2) : renderer.zoomAt(canvas.width / 2, canvas.height / 2, 0.8);
+      if (state.view === 'pixel') vox.zoom(1 / 1.2);
+      else if (state.view === '3d') globe.zoom(1 / 1.2);
+      else renderer.zoomAt(canvas.width / 2, canvas.height / 2, 0.8);
       draw(); break;
     default: return;
   }
@@ -537,8 +781,14 @@ function inspect(p) {
     ${picks.length ? `<h4>この環境で見られる動物</h4><ul>${picks.map((f) =>
       `<li>${f.name}<em>${f.latin} · ${f.group} · 全長${f.size}m · ${f.diet}食</em></li>`).join('')}</ul>` : ''}
     ${floraPicks.length ? `<h4>植生</h4><ul>${floraPicks.map((f) => `<li>${f.name}</li>`).join('')}</ul>` : ''}
+    <button class="mini wide descend">この地点の地表へ降りる</button>
   `;
   el.querySelector('.close').onclick = hideInspector;
+  el.querySelector('.descend').onclick = () => {
+    const spot = { x, y, from: near ? near.name : null };
+    setView('pixel');
+    descend(spot);
+  };
 }
 
 function weightedSample(pool, k, rand) {
@@ -579,6 +829,74 @@ function nearestMark(x, y, w) {
   return best;
 }
 
+// ---------- 地点の調査：地表ボクセル -------------------------------------
+
+/** 区画内の 1 列の情報。標高は「その柱の頂点」を実寸に戻して示す */
+function voxColumn(hit) {
+  const s = state.voxScene;
+  if (!s || !hit) return null;
+  const i = hit.i;
+  const hb = s.height[i];
+  const wl = s.water[i];
+  const biomeId = s.biomeKeys[s.biomeAt[i]];
+  return {
+    i, hb, wl, biomeId,
+    biome: BIOMES[biomeId],
+    block: BLOCKS[s.surf[i]],
+    elevM: hb * VOX_M,
+    depthM: wl !== WATER_NONE && wl > hb ? (wl - hb) * VOX_M : 0,
+    // 気温は区画の基準値から高度分だけ下げる（6.2℃/km）
+    tempC: s.meta.tempC - Math.max(0, hb * VOX_M - s.meta.baseElevM) * 0.0062,
+  };
+}
+
+function updateVoxCoords(p) {
+  const coords = $('#coords');
+  const hit = vox && vox.ok ? vox.pick(p[0], p[1]) : null;
+  const c = voxColumn(hit);
+  if (!c) { coords.textContent = ''; return; }
+  coords.textContent =
+    `${c.block.name} / ${c.biome.name}\n` +
+    `標高 ${c.elevM.toLocaleString()}m${c.depthM ? ` / 水深 ${c.depthM}m` : ''} / ${c.tempC.toFixed(1)}℃`;
+}
+
+function inspectVoxel(hit) {
+  const s = state.voxScene;
+  const c = voxColumn(hit);
+  if (!c) { hideInspector(); return; }
+  // その柱にいちばん近い動物（見えている個体の説明を出す）
+  let near = null, nd = 40;
+  for (const f of s.fauna) {
+    const d = Math.hypot(f.x - hit.x, f.z - hit.z);
+    if (d < nd) { nd = d; near = f; }
+  }
+  const rand = mulberry32((hit.x * 73856093) ^ (hit.z * 19349663) ^ 0x9e3779b9);
+  const pool = faunaFor(s.era.id, c.biomeId);
+  const picks = weightedSample(pool, 3, rand);
+  const flora = weightedSample((FLORA[s.era.id] || []).map((f) => ({ name: f, w: 1 })), c.biome.water ? 0 : 3, rand);
+
+  const el = $('#inspector');
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <button class="close" title="閉じる">×</button>
+    <h3>${c.biome.name}</h3>
+    <p class="sub">${s.meta.from ? s.meta.from + ' 周辺 · ' : ''}${Math.round(s.era.ma)} 百万年前（${s.era.name}）</p>
+    <dl>
+      <dt>地表</dt><dd>${c.block.name}</dd>
+      <dt>標高</dt><dd>${c.elevM.toLocaleString()} m</dd>
+      ${c.depthM ? `<dt>水深</dt><dd>${c.depthM.toLocaleString()} m</dd>` : ''}
+      <dt>気温</dt><dd>${c.tempC.toFixed(1)} ℃</dd>
+      <dt>区画内の位置</dt><dd>${(hit.x * VOX_M / 1000).toFixed(2)} / ${(hit.z * VOX_M / 1000).toFixed(2)} km</dd>
+      ${near ? `<dt>目の前の個体</dt><dd>${near.name}</dd>` : ''}
+    </dl>
+    ${near ? `<h4>この個体</h4><ul><li>${near.name}<em>${near.latin} · ${near.group} · 全長${near.size}m</em></li></ul>` : ''}
+    ${picks.length ? `<h4>この環境で見られる動物</h4><ul>${picks.map((f) =>
+      `<li>${f.name}<em>${f.latin} · ${f.group} · 全長${f.size}m · ${f.diet}食</em></li>`).join('')}</ul>` : ''}
+    ${flora.length ? `<h4>植生</h4><ul>${flora.map((f) => `<li>${f.name}</li>`).join('')}</ul>` : ''}
+  `;
+  el.querySelector('.close').onclick = hideInspector;
+}
+
 // ---------- 起動 --------------------------------------------------------
 
 $('#seed').value = state.seed;
@@ -591,6 +909,8 @@ $('#reroll').onclick = () => {
 $('#generate').onclick = () => regenerate();
 
 buildViewSwitch();
+buildVoxControls();
+buildVoxPlace();
 buildEraTabs();
 buildTimeline();
 buildSizes();

@@ -149,10 +149,10 @@ kbd {
 
 
 /* ---- 2D / 3D 切替と年代スライダー ---- */
-.viewswitch { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.viewswitch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
 .viewswitch button {
   background: var(--panel); border: 1px solid var(--line); color: var(--muted);
-  padding: 8px 4px; border-radius: 6px; cursor: pointer; font: 12px/1.3 inherit;
+  padding: 8px 3px; border-radius: 6px; cursor: pointer; font: 11.5px/1.3 inherit;
 }
 .viewswitch button.on { color: #0b0f1a; background: var(--accent-2); border-color: var(--accent-2); font-weight: 600; }
 
@@ -175,6 +175,24 @@ kbd {
 #globe.dragging { cursor: grabbing; }
 #globe-overlay { pointer-events: none; }
 #globe.hidden, #globe-overlay.hidden, #map.hidden { display: none; }
+
+/* ---- 地表ボクセルビュー ---- */
+#vox, #vox-overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#vox {
+  cursor: grab; background: #0a1018;
+  /* 内部解像度を落として nearest 拡大する。ここがドット絵らしさの正体で、
+     補間を許すと縁がにじんでピクセルに見えなくなる */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+#vox.dragging { cursor: grabbing; }
+#vox-overlay { pointer-events: none; }
+#vox.hidden, #vox-overlay.hidden, #vox-panel.hidden { display: none; }
+
+.voxplace { font-size: 11.5px; line-height: 1.7; color: var(--muted); margin-bottom: 8px; }
+.voxplace b { color: var(--text); font-size: 12.5px; display: block; margin-bottom: 2px; }
+.voxplace i { font-style: normal; color: var(--accent-2); }
+button.mini.wide { width: 100%; padding: 7px; }
 
 #gl-error {
   position: absolute; inset: 0; display: grid; place-content: center; text-align: center;

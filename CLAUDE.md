@@ -3,6 +3,11 @@
 中生代のワールドマップを手続き的に生成するブラウザアプリ。依存パッケージなし、
 ES モジュールのみ。生成器はブラウザ API に依存させず、Node からも動かせる状態を保つ。
 
+表示は 2D 地図・3D 地球儀・地表ボクセル（3D ピクセル）の三つ。
+地表ボクセルはマップの 1 セル（約 20km）の内側に降りるビューで、
+マップからは標高・気温・湿潤度・大陸性・火山活動だけを借り、
+汀線・水系・地層・植生・動物はその場で作る（`src/voxel/`）。
+
 ## 動かす・確かめる
 
 ```bash
@@ -19,7 +24,10 @@ node tools/render.mjs --ma 195 --size small --out /tmp/x  # 紀と紀のあい�
 chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' })
 ```
 
-`python3 -m http.server` で配信し、`#progress` が hidden になるまで待ってから撮影する。
+`python3 -m http.server` で配信し、`#progress` が hidden になるまで待ってから撮影する
+（`waitForSelector('#progress.hidden')` は「表示待ち」なので効かない。
+`waitForFunction` でクラスを見ること）。地表ボクセルは
+`button[data-view="pixel"]` を押してから、生成完了をもう一度待つ。
 3D を見るときはヘッドレスに GPU が無いので SwiftShader を明示する:
 `args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']`
 
@@ -58,12 +66,27 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 9. **大陸地殻の上の海は深海にしない。** `cont > 0.45` の水域は水深によらず内海として扱う。
    西部内陸海路のような陸棚海を正しく出すために必要。
 
+10. **陰影を掛けた頂点色は 255 を超える。** ボクセルの頂点色は `Uint8ClampedArray` に書く。
+    素の `Uint8Array` だと 260 が 4 に巻き戻り、砂浜や岩肌が蛍光色の市松模様になる。
+
+11. **`classify()` の水中判定は 20km セル向け。** 深さ 0.04（＝248m）までを礁とみなすので、
+    6m 刻みの地表ではそのまま使うと大陸棚が全部サンゴ礁になる。
+    地表では実水深（m）で水域を分ける（`marineBiome()`）。
+
+12. **窪地を全部湖にしない。** フラクタル地形は閉じた盆地だらけで、埋めた分だけ水を張ると
+    山地の 3 割が水没する。浅い窪地は堆積で埋め、水が集まり広がりすぎない窪地だけ湖にする。
+
+13. **海面ちょうどの平坦面は市松模様になる。** 汀の勾配を `tanh` で立て、1 ブロックだけの
+    孤立した水は埋める。ただし河川と湖は細くても残す（消すと川が砂の溝になる）。
+
 ## 健全性の目安
 
 - 陸地率：三畳紀 30±4% / ジュラ紀 27±4% / 白亜紀 20±4%
 - 平均気温 15〜22℃（氷冠のない温室地球なので、ツンドラや氷床のバイオームは作らない）
 - 陸上バイオームは 1 種が 35% を超えない
 - 高山帯は陸地の 6% 未満（造山帯の外まで広がっていたら隆起モデルが壊れている）
+- 地表ボクセルの 1 区画：標高差 25m〜6km、水面が全面（>98%）にならない、
+  河川か湖がどこかにある、動物は 60 頭未満
 
 ## サブエージェント
 
@@ -74,6 +97,7 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 - `biome-ecologist` — `biomes.js` / `fauna.js`
 - `map-cartographer` — `render/raster.js` `renderer.js` と UI
 - `globe-engineer` — `render/globe.js` の 3D 地球儀とシェーダ
+- `voxel-builder` — `voxel/` と `render/voxelview.js` の地表ボクセル
 - `world-qa` — 検証と報告（コードは直さない）
 
 ## コード方針
@@ -83,3 +107,5 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 - 生成器に DOM を持ち込まない。ラスタ生成は `render/raster.js` に置き、
   ブラウザと CLI で同じ絵になるようにする
 - 大きな配列は型付き配列を使う。極大サイズ（4096×2048）で 8.4M セルになる
+- ボクセルは全部持たない。列の高さ 1 枚から「天面＋隣より高い分の側面」だけを面にし、
+  遠景は 2 倍・4 倍のブロックにまとめる（全域を 6m ブロックで描くと頂点が数千万になる）
