@@ -325,15 +325,42 @@ function plesiosaur(rand, hide) {
 
 export const FAUNA_BUILDERS = { sauropod, theropod, ornithischian, pterosaur, plesiosaur };
 
-/** fauna.js の分類群名を、どのモデルで描くかに対応づける */
-export function modelForGroup(group) {
+/**
+ * fauna.js の分類群名を、どのドット絵で描くかに対応づける。
+ * 絵は assets/fauna/<返り値>.png。判定は上から順に当てるので、
+ * 広い語（竜脚）より先に狭い語（角竜・剣竜）を置くこと。
+ */
+export function spriteForGroup(group) {
   if (/翼竜/.test(group)) return 'pterosaur';
+  if (/魚竜|硬骨魚|アンモナイト/.test(group)) return 'ichthyosaur';
+  if (/首長竜|鰭竜|板歯|原鰭竜|モササウルス|ウミガメ/.test(group)) return 'plesiosaur';
+  if (/角竜/.test(group)) return 'ceratopsian';
+  if (/剣竜/.test(group)) return 'stegosaur';
+  if (/曲竜|アエトサウルス/.test(group)) return 'ankylosaur';
+  if (/鳥脚|ハドロサウルス|堅頭竜/.test(group)) return 'ornithopod';
   if (/竜脚/.test(group)) return 'sauropod';
-  if (/獣脚|ラウイスクス|鳥類/.test(group)) return 'theropod';
-  if (/首長竜|モササウルス|魚竜|鰭竜|板歯|原鰭竜|ウミガメ/.test(group)) return 'plesiosaur';
-  if (/角竜|剣竜|曲竜|堅頭竜|鳥脚|ハドロサウルス|アエトサウルス|キノドン|分椎|基盤竜盤/.test(group)) return 'ornithischian';
+  if (/キノドン|分椎/.test(group)) return 'synapsid';
+  // 獣脚類・ドロマエオサウルス類・鳥類・ラウイスクス類・基盤竜盤類
   return 'theropod';
 }
+
+/** 水の中で暮らす種別。陸に打ち上げないための判定に使う */
+export const SWIM_SPRITES = new Set(['plesiosaur', 'ichthyosaur']);
+/** 空を行く種別 */
+export const FLY_SPRITES = new Set(['pterosaur']);
+
+/**
+ * 絵がまだ無い種別の逃げ先。10 枚すべて揃っていなくても
+ * 動物が消えずに済むよう、近い体つきの絵で代用する。
+ */
+export const SPRITE_FALLBACK = {
+  ornithopod: 'ornithischian',
+  ceratopsian: 'ornithischian',
+  stegosaur: 'ornithischian',
+  ankylosaur: 'ornithischian',
+  ichthyosaur: 'plesiosaur',
+  synapsid: 'theropod',
+};
 
 export const HIDES = [B.hideA, B.hideB, B.hideC, B.hideDark];
 

@@ -13,6 +13,9 @@ import { ERAS } from '../src/world/eras.js';
 import { eraAtAge, AGE_MIN, AGE_MAX } from '../src/world/timeline.js';
 import { buildVoxelScene, pickScenicSpot, WATER_NONE } from '../src/voxel/scene.js';
 import { VOX_M, BLOCKS, groundOf } from '../src/voxel/blocks.js';
+import { spriteForGroup, SPRITE_FALLBACK } from '../src/voxel/models.js';
+import { sprite, SPRITE_KEYS } from '../src/voxel/sprites.js';
+import { FAUNA } from '../src/world/fauna.js';
 import {
   createGameWorld, enterScene, findSpawn, sampleColumn, faunaNear,
   serializeScene, describeScene, SCENE_FORMAT, createBody, stepBody, columnTop, PHYS,
@@ -155,7 +158,41 @@ console.log('\n[年代軸]');
   pass(`海進の傾向：陸地率 ${lands.map((v) => (v * 100).toFixed(1) + '%').join(' → ')}`);
 }
 
-// ---- 4. 地表ボクセル ---------------------------------------------------
+// ---- 4. 動物のドット絵 -------------------------------------------------
+console.log('\n[動物のドット絵]');
+{
+  // 絵が 10 枚揃っていなくても、どの種も代用の絵で描けること。
+  // ここが落ちると、その分類の動物だけが画面から消える（気づきにくい）
+  const resolve = (k) => (sprite(k) ? k : (SPRITE_FALLBACK[k] && sprite(SPRITE_FALLBACK[k]) ? SPRITE_FALLBACK[k] : null));
+  const missing = [];
+  const used = new Map();
+  for (const [era, list] of Object.entries(FAUNA)) {
+    for (const sp of list) {
+      const want = spriteForGroup(sp.group);
+      if (!resolve(want)) missing.push(`${era}/${sp.name}(${sp.group})→${want}`);
+      used.set(want, (used.get(want) || 0) + 1);
+    }
+  }
+  if (missing.length) fail(`絵に行き着かない種：${missing.slice(0, 4).join(' ')}`);
+  else pass(`${[...used.values()].reduce((a, b) => a + b, 0)} 種すべてが絵に行き着く（絵 ${SPRITE_KEYS.length} 枚 / 種別 ${used.size} 分類）`);
+
+  // 絵そのものが空でないこと（透明だけの PNG を取り込むと動物が見えなくなる）
+  let blank = 0;
+  for (const k of SPRITE_KEYS) {
+    const s2 = sprite(k);
+    let opaque = 0;
+    for (let i = 3; i < s2.data.length; i += 4) if (s2.data[i] > 128) opaque++;
+    if (opaque < 4) blank++;
+  }
+  if (blank) fail(`中身が空に近い絵が ${blank} 枚`);
+  else pass('どの絵にも不透明な画素がある');
+
+  const own = [...used.keys()].filter((k) => sprite(k));
+  const sub = [...used.keys()].filter((k) => !sprite(k));
+  if (sub.length) console.log(`  · 専用の絵 ${own.length} 分類 / 代用 ${sub.length} 分類（${sub.join('・')}）`);
+}
+
+// ---- 5. 地表ボクセル ---------------------------------------------------
 console.log('\n[地表ボクセル]');
 {
   const w = await generateWorld({ seed: 'pangaea', ma: 160, size: 'small' });

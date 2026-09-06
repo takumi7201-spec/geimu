@@ -114,8 +114,10 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
     カメラへ向く板として立てる（`SPRITE_VS`）。完全なビルボードにすると見上げた
     ときに絵が寝て、地面から生えたように見える。抜きは `discard` で捨てる
     ―― 半透明で混ぜると板の矩形が深度に残り、後ろの地形が四角く欠ける。
-    ファイル名がそのまま種別キーで、`modelForGroup()` が返す 5 つ
-    （theropod / sauropod / ornithischian / pterosaur / plesiosaur）に対応する。
+    ファイル名がそのまま種別キーで、`spriteForGroup()` が返す 10 分類に対応する
+    （置き場と対応表は `assets/fauna/README.md`）。絵が欠けている分類は
+    `SPRITE_FALLBACK` で近い体つきの絵に逃がす ―― 逃がさないと、その分類の
+    動物だけが黙って画面から消える。`npm test` が全種の行き先を検めている。
 
 20. **板が見えないときは、まず大きさを疑う前に深度と抜きを分けて見る。** 実寸では
     6m の獣脚類は 1 ブロックしかなく、20〜30m の木立の中では数ピクセルにしかならない。

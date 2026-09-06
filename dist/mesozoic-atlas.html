@@ -3340,7 +3340,7 @@ return { VOX_M, BLOCKS, B, BLOCK_COLORS, BLOCK_GLOW, SPECKLE, UNDERGROWTH, strat
 })();
 
 // ===== src/voxel/models.js =====
-const { PLANT_BUILDERS, FAUNA_BUILDERS, modelForGroup, HIDES, modelSpan } = await (async () => {
+const { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SWIM_SPRITES, FLY_SPRITES, SPRITE_FALLBACK, HIDES, modelSpan } = await (async () => {
 /**
  * ボクセルモデル（植物・動物・岩）。
  *
@@ -3667,15 +3667,42 @@ function plesiosaur(rand, hide) {
 
 const FAUNA_BUILDERS = { sauropod, theropod, ornithischian, pterosaur, plesiosaur };
 
-/** fauna.js の分類群名を、どのモデルで描くかに対応づける */
-function modelForGroup(group) {
+/**
+ * fauna.js の分類群名を、どのドット絵で描くかに対応づける。
+ * 絵は assets/fauna/<返り値>.png。判定は上から順に当てるので、
+ * 広い語（竜脚）より先に狭い語（角竜・剣竜）を置くこと。
+ */
+function spriteForGroup(group) {
   if (/翼竜/.test(group)) return 'pterosaur';
+  if (/魚竜|硬骨魚|アンモナイト/.test(group)) return 'ichthyosaur';
+  if (/首長竜|鰭竜|板歯|原鰭竜|モササウルス|ウミガメ/.test(group)) return 'plesiosaur';
+  if (/角竜/.test(group)) return 'ceratopsian';
+  if (/剣竜/.test(group)) return 'stegosaur';
+  if (/曲竜|アエトサウルス/.test(group)) return 'ankylosaur';
+  if (/鳥脚|ハドロサウルス|堅頭竜/.test(group)) return 'ornithopod';
   if (/竜脚/.test(group)) return 'sauropod';
-  if (/獣脚|ラウイスクス|鳥類/.test(group)) return 'theropod';
-  if (/首長竜|モササウルス|魚竜|鰭竜|板歯|原鰭竜|ウミガメ/.test(group)) return 'plesiosaur';
-  if (/角竜|剣竜|曲竜|堅頭竜|鳥脚|ハドロサウルス|アエトサウルス|キノドン|分椎|基盤竜盤/.test(group)) return 'ornithischian';
+  if (/キノドン|分椎/.test(group)) return 'synapsid';
+  // 獣脚類・ドロマエオサウルス類・鳥類・ラウイスクス類・基盤竜盤類
   return 'theropod';
 }
+
+/** 水の中で暮らす種別。陸に打ち上げないための判定に使う */
+const SWIM_SPRITES = new Set(['plesiosaur', 'ichthyosaur']);
+/** 空を行く種別 */
+const FLY_SPRITES = new Set(['pterosaur']);
+
+/**
+ * 絵がまだ無い種別の逃げ先。10 枚すべて揃っていなくても
+ * 動物が消えずに済むよう、近い体つきの絵で代用する。
+ */
+const SPRITE_FALLBACK = {
+  ornithopod: 'ornithischian',
+  ceratopsian: 'ornithischian',
+  stegosaur: 'ornithischian',
+  ankylosaur: 'ornithischian',
+  ichthyosaur: 'plesiosaur',
+  synapsid: 'theropod',
+};
 
 const HIDES = [B.hideA, B.hideB, B.hideC, B.hideDark];
 
@@ -3685,7 +3712,7 @@ function modelSpan(m) {
   for (const b of m.boxes) { lo = Math.min(lo, b.x); hi = Math.max(hi, b.x + b.w); }
   return Math.max(1, hi - lo);
 }
-return { PLANT_BUILDERS, FAUNA_BUILDERS, modelForGroup, HIDES, modelSpan };
+return { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SWIM_SPRITES, FLY_SPRITES, SPRITE_FALLBACK, HIDES, modelSpan };
 })();
 
 // ===== src/voxel/scene.js =====
@@ -4181,9 +4208,9 @@ async function buildVoxelScene(world, opts, onProgress = () => {}) {
   const herds = 2 + ((rand() * 3) | 0);
   for (let hcount = 0; hcount < herds && pool.length; hcount++) {
     const sp = pool[(rand() * pool.length) | 0];
-    const kind = modelForGroup(sp.group);
-    const flying = kind === 'pterosaur';
-    const swimming = kind === 'plesiosaur';
+    const kind = spriteForGroup(sp.group);
+    const flying = FLY_SPRITES.has(kind);
+    const swimming = SWIM_SPRITES.has(kind);
     // 動物はボクセル模型ではなくドット絵の板で立てる。models には積まない
     // （描画側が sprite キーでアトラスを引く。板の寸法は全長 size から出す）
     const count = 1 + ((rand() * (sp.size > 12 ? 2 : 4)) | 0);
@@ -4300,6 +4327,15 @@ const M = { identity, multiply, perspective, translation, rotationX, rotationY, 
 
 
 
+
+
+/** 絵が無い種別は近い体つきの絵で代用する（10 枚揃っていなくても動物を消さない） */
+function spriteKey(key) {
+  if (!key) return null;
+  if (sprite(key)) return key;
+  const alt = SPRITE_FALLBACK[key];
+  return alt && sprite(alt) ? alt : null;
+}
 
 const SOLID_VS = `
 attribute vec3 aPos;
@@ -4792,11 +4828,17 @@ class VoxelRenderer {
   _buildSprites() {
     const gl = this.gl, s = this.scene;
     if (this.spriteMesh) { gl.deleteBuffer(this.spriteMesh.vb); this.spriteMesh = null; }
-    const list = this.layers.fauna ? s.fauna.filter((f) => f.sprite && sprite(f.sprite)) : [];
+    const list = [];
+    if (this.layers.fauna) {
+      for (const f of s.fauna) {
+        const k = spriteKey(f.sprite);
+        if (k) list.push({ f, k });
+      }
+    }
     if (!list.length) return;
 
     // 使う絵だけを横に並べて 1 枚に。体ごとにテクスチャを持ち替えずに済む
-    const keys = [...new Set(list.map((f) => f.sprite))];
+    const keys = [...new Set(list.map((e) => e.k))];
     const slot = {};
     let AW = 0, AH = 0;
     for (const k of keys) {
@@ -4826,8 +4868,8 @@ class VoxelRenderer {
 
     const F = new Float32Array(list.length * 6 * 7);
     let o = 0;
-    for (const f of list) {
-      const sp = sprite(f.sprite), st = slot[f.sprite];
+    for (const { f, k } of list) {
+      const sp = sprite(k), st = slot[k];
       // 絵の横幅がその種の全長。高さは絵の縦横比に従う（1 ブロック = 6m）
       const wB = Math.max(0.25, f.size / VOX_M);
       const hB = wB * (sp.h / sp.w), hw = wB / 2;
@@ -5103,7 +5145,7 @@ class VoxelRenderer {
     for (const f of this.scene.fauna) {
       // 同じ種の名前を何度も出さない。群れの上に同じ札が並ぶと読めなくなる
       if (seenName.has(f.name) || drawn.length >= 6) continue;
-      const sp = sprite(f.sprite);
+      const sp = sprite(spriteKey(f.sprite));
       const top = f.y + (sp ? (f.size / VOX_M) * (sp.h / sp.w) : 1);
       const p = this.project(f.x + 0.5, top, f.z + 0.5);
       if (!p || p.w > this.scene.total * 0.8) continue;

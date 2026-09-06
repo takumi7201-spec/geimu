@@ -20,6 +20,15 @@ import { clamp } from '../core/rng.js';
 import { BLOCK_COLORS, BLOCK_GLOW, B, VOX_M } from '../voxel/blocks.js';
 import { WATER_NONE, strataFor } from '../voxel/scene.js';
 import { sprite } from '../voxel/sprites.js';
+import { SPRITE_FALLBACK } from '../voxel/models.js';
+
+/** 絵が無い種別は近い体つきの絵で代用する（10 枚揃っていなくても動物を消さない） */
+function spriteKey(key) {
+  if (!key) return null;
+  if (sprite(key)) return key;
+  const alt = SPRITE_FALLBACK[key];
+  return alt && sprite(alt) ? alt : null;
+}
 
 const SOLID_VS = `
 attribute vec3 aPos;
@@ -512,11 +521,17 @@ export class VoxelRenderer {
   _buildSprites() {
     const gl = this.gl, s = this.scene;
     if (this.spriteMesh) { gl.deleteBuffer(this.spriteMesh.vb); this.spriteMesh = null; }
-    const list = this.layers.fauna ? s.fauna.filter((f) => f.sprite && sprite(f.sprite)) : [];
+    const list = [];
+    if (this.layers.fauna) {
+      for (const f of s.fauna) {
+        const k = spriteKey(f.sprite);
+        if (k) list.push({ f, k });
+      }
+    }
     if (!list.length) return;
 
     // 使う絵だけを横に並べて 1 枚に。体ごとにテクスチャを持ち替えずに済む
-    const keys = [...new Set(list.map((f) => f.sprite))];
+    const keys = [...new Set(list.map((e) => e.k))];
     const slot = {};
     let AW = 0, AH = 0;
     for (const k of keys) {
@@ -546,8 +561,8 @@ export class VoxelRenderer {
 
     const F = new Float32Array(list.length * 6 * 7);
     let o = 0;
-    for (const f of list) {
-      const sp = sprite(f.sprite), st = slot[f.sprite];
+    for (const { f, k } of list) {
+      const sp = sprite(k), st = slot[k];
       // 絵の横幅がその種の全長。高さは絵の縦横比に従う（1 ブロック = 6m）
       const wB = Math.max(0.25, f.size / VOX_M);
       const hB = wB * (sp.h / sp.w), hw = wB / 2;
@@ -823,7 +838,7 @@ export class VoxelRenderer {
     for (const f of this.scene.fauna) {
       // 同じ種の名前を何度も出さない。群れの上に同じ札が並ぶと読めなくなる
       if (seenName.has(f.name) || drawn.length >= 6) continue;
-      const sp = sprite(f.sprite);
+      const sp = sprite(spriteKey(f.sprite));
       const top = f.y + (sp ? (f.size / VOX_M) * (sp.h / sp.w) : 1);
       const p = this.project(f.x + 0.5, top, f.z + 0.5);
       if (!p || p.w > this.scene.total * 0.8) continue;
