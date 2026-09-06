@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中生代ワールドマップ — Mesozoic Atlas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0f1a'/%3E%3Cpath d='M4 21c4-7 9-9 13-6s7 1 11-3v12H4z' fill='%235c8c58'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <header class="brand">
+      <h1>中生代<span>ワールドマップ</span></h1>
+      <p class="tag">Mesozoic Atlas — 手続き的古地理ジェネレータ</p>
+    </header>
+
+    <section class="panel">
+      <h2>紀</h2>
+      <div class="era-tabs" id="era-tabs"></div>
+      <p class="era-desc" id="era-desc"></p>
+    </section>
+
+    <section class="panel">
+      <h2>世界の設定</h2>
+      <label class="field">
+        <span>シード</span>
+        <div class="row">
+          <input id="seed" type="text" value="pangaea" spellcheck="false">
+          <button id="reroll" class="mini" title="ランダムなシード">🎲</button>
+        </div>
+      </label>
+      <label class="field">
+        <span>解像度</span>
+        <select id="size"></select>
+      </label>
+      <button id="generate" class="primary">世界を生成</button>
+    </section>
+
+    <section class="panel">
+      <h2>表示</h2>
+      <div class="modes" id="modes"></div>
+      <div class="toggles" id="toggles"></div>
+    </section>
+
+    <section class="panel">
+      <h2>凡例</h2>
+      <div id="legend" class="legend"></div>
+    </section>
+
+    <section class="panel">
+      <h2>この世界の統計</h2>
+      <div id="stats" class="stats"></div>
+    </section>
+
+    <footer class="hint">
+      ドラッグで移動 / ホイールでズーム / クリックで地点を調査<br>
+      キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 紀切替 ・ <kbd>R</kbd> 再生成 ・ <kbd>L</kbd> ラベル ・ <kbd>F</kbd> 全体表示
+    </footer>
+  </aside>
+
+  <main id="stage">
+    <canvas id="map"></canvas>
+    <div id="minimap-wrap"><canvas id="minimap" width="240" height="120"></canvas></div>
+    <div id="inspector" class="hidden"></div>
+    <div id="progress" class="hidden"><div class="bar"><i></i></div><span></span></div>
+    <div id="coords"></div>
+  </main>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

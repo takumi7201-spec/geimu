@@ -1,0 +1,13 @@
+{
+  "name": "mesozoic-atlas",
+  "version": "0.1.0",
+  "description": "中生代の広大なワールドマップを手続き的に生成するアトラス",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "render": "node tools/render.mjs",
+    "test": "node tools/verify.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
