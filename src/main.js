@@ -11,6 +11,8 @@ import { GlobeRenderer } from './render/globe.js';
 import { VoxelRenderer } from './render/voxelview.js';
 import { buildVoxelScene, pickScenicSpot, SCENE_SIZES, WATER_NONE } from './voxel/scene.js';
 import { BLOCKS, VOX_M } from './voxel/blocks.js';
+import { Explorer } from './game/player.js';
+import { findSpawn, sampleColumn, faunaNear } from './game/api.js';
 import { mulberry32, clamp } from './core/rng.js';
 
 const $ = (s) => document.querySelector(s);
@@ -39,6 +41,8 @@ const state = {
   voxSpot: null,
   voxSize: 'medium',
   voxDirty: true,
+  explore: false,     // 一人称の探索モード
+  explorer: null,
 };
 
 /** 現在の年代が属する紀（キーフレームちょうどでなくても近いほうを返す） */
@@ -111,6 +115,7 @@ function setView(view) {
   for (const b of $('#viewswitch').children) b.classList.toggle('on', b.dataset.view === view);
   const is3d = view === '3d';
   const isVox = view === 'pixel';
+  if (!isVox && state.explore) setExplore(false);
   canvas.classList.toggle('hidden', view !== '2d');
   globeCanvas.classList.toggle('hidden', !is3d);
   globeOverlay.classList.toggle('hidden', !is3d);
@@ -180,6 +185,11 @@ async function descend(spot = null, variant = '') {
     state.voxSpot = target;
     state.voxDirty = false;
     vox.setScene(scene);
+    if (state.explore) {
+      // 別の区画に降りたら、その場に立ち直す
+      vox.setFirstPerson(true);
+      state.explorer = new Explorer(scene, findSpawn(scene), { yaw: vox.cam.yaw, pitch: -0.1 });
+    }
     buildVoxPlace();
     buildStats();
     draw();
@@ -191,6 +201,51 @@ async function descend(spot = null, variant = '') {
     prog.classList.add('hidden');
     state.busy = false;
   }
+}
+
+/**
+ * 探索モード。区画のなかを一人称で歩く。
+ * 操作は `game/player.js`（DOM 非依存）に閉じてあるので、
+ * ゲームに持っていくときはこのアプリ側の配線だけを書き換えればよい。
+ */
+function setExplore(on) {
+  if (!vox || !vox.ok || !state.voxScene) return;
+  state.explore = on;
+  if (on) {
+    const spawn = findSpawn(state.voxScene);
+    state.explorer = new Explorer(state.voxScene, spawn, { yaw: vox.cam.yaw, pitch: -0.1 });
+    vox.setFirstPerson(true);
+    voxCanvas.classList.add('explore');
+    hideInspector();
+    // ポインタロックが取れればマウスで視線を回せる。取れない環境では
+    // ドラッグでも回せるようにしてあるので、失敗しても探索自体は続く
+    voxCanvas.requestPointerLock?.();
+  } else {
+    state.explorer = null;
+    vox.setFirstPerson(false);
+    voxCanvas.classList.remove('explore');
+    if (document.pointerLockElement === voxCanvas) document.exitPointerLock?.();
+  }
+  $('#vox-explore').textContent = on ? '探索モードを抜ける（E）' : '探索モードに入る（E）';
+  $('#vox-hud').classList.toggle('hidden', !on);
+  updateVoxHud();
+  draw();
+}
+
+function updateVoxHud() {
+  const hud = $('#vox-hud');
+  if (!state.explore || !state.explorer) { hud.textContent = ''; return; }
+  const st = state.explorer.status();
+  const s = state.voxScene;
+  if (!st) return;
+  const col = sampleColumn(s, st.x, st.z);
+  const near = faunaNear(s, st.x, st.z, 30)[0];
+  const mode = st.flying ? '飛行' : st.submerged ? '潜水' : st.inWater ? '遊泳' : st.onGround ? '徒歩' : '落下';
+  hud.innerHTML =
+    `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
+    `${mode}　${(st.speed * VOX_M).toFixed(0)} m/s　目線 ${Math.round(st.eyeM).toLocaleString()}m\n` +
+    (near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）\n` : '') +
+    `<i>WASD 移動 / Space 跳ぶ / Shift 走る / V 飛行 / E 抜ける</i>`;
 }
 
 function buildVoxPlace() {
@@ -224,6 +279,7 @@ function buildVoxControls() {
     draw();
   };
   $('#vox-reroll').onclick = () => descend(null, String(Math.random()).slice(2, 7));
+  $('#vox-explore').onclick = () => setExplore(!state.explore);
 }
 
 function buildSizes() {
@@ -480,10 +536,21 @@ function draw() {
 // 他の表示に切り替えたらループは自分で止まる（rAF を回し続けない）
 let voxLast = 0;
 let voxRunning = false;
+let hudTick = 0;
 function voxLoop(t) {
   if (state.view !== 'pixel') { voxRunning = false; return; }
   requestAnimationFrame(voxLoop);
   if (!vox || !vox.ok || !state.voxScene) return;
+  const dt = voxLast ? (t - voxLast) / 1000 : 1 / 60;
+  if (state.explore && state.explorer) {
+    // 探索中は間引かない（間引くと視点がかくつき、当たり判定も粗くなる）
+    const v = state.explorer.update(dt);
+    if (v) vox.setEye(v.eye[0], v.eye[1], v.eye[2], v.yaw, v.pitch);
+    vox.render(t - voxLast);
+    voxLast = t;
+    if ((hudTick = (hudTick + 1) % 6) === 0) updateVoxHud();
+    return;
+  }
   if (t - voxLast < 32) return;
   vox.render(t - voxLast);
   voxLast = t;
@@ -598,7 +665,10 @@ globeCanvas.addEventListener('wheel', (e) => {
 let vdrag = null;
 voxCanvas.addEventListener('pointerdown', (e) => {
   if (!vox || !vox.ok) return;
-  voxCanvas.setPointerCapture(e.pointerId);
+  // ポインタロック中はカーソルが無いので捕捉できない（例外になる）
+  if (document.pointerLockElement !== voxCanvas) {
+    try { voxCanvas.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
+  }
   vdrag = { x: e.clientX, y: e.clientY, moved: 0 };
   voxCanvas.classList.add('dragging');
 });
@@ -608,16 +678,36 @@ voxCanvas.addEventListener('pointermove', (e) => {
     const dx = e.clientX - vdrag.x, dy = e.clientY - vdrag.y;
     vdrag.moved += Math.abs(dx) + Math.abs(dy);
     vdrag.x = e.clientX; vdrag.y = e.clientY;
-    vox.rotate(dx, dy);
+    // 探索中はポインタロックが取れない環境のための「ドラッグで首を振る」
+    if (state.explore && state.explorer) state.explorer.look(dx * 2.2, dy * 2.2);
+    else vox.rotate(dx, dy);
     draw();
   }
-  updateVoxCoords(voxPoint(e));
+  if (!state.explore) updateVoxCoords(voxPoint(e));
 });
 voxCanvas.addEventListener('pointerup', (e) => {
   voxCanvas.classList.remove('dragging');
   const wasClick = vdrag && vdrag.moved < 5;
   vdrag = null;
-  if (wasClick) inspectVoxel(vox.pick(...voxPoint(e)));
+  if (!wasClick) return;
+  // 探索中のクリックはマウス操作を掴むため（調査は俯瞰のときだけ）
+  if (state.explore) { voxCanvas.requestPointerLock?.(); return; }
+  inspectVoxel(vox.pick(...voxPoint(e)));
+});
+
+// ポインタロック中はカーソルが動かないので、移動量だけを受け取る
+document.addEventListener('mousemove', (e) => {
+  if (!state.explore || !state.explorer) return;
+  if (document.pointerLockElement !== voxCanvas) return;
+  state.explorer.look(e.movementX || 0, e.movementY || 0);
+});
+document.addEventListener('pointerlockchange', () => {
+  // ロックが外れたら押しっぱなしのキーを解く（外に出た瞬間に走り続けない）
+  if (document.pointerLockElement !== voxCanvas && state.explorer) state.explorer.releaseAll();
+});
+window.addEventListener('blur', () => { if (state.explorer) state.explorer.releaseAll(); });
+window.addEventListener('keyup', (e) => {
+  if (state.explorer && state.explorer.key(e.code, false)) e.preventDefault();
 });
 voxCanvas.addEventListener('pointerleave', () => { vdrag = null; voxCanvas.classList.remove('dragging'); });
 voxCanvas.addEventListener('wheel', (e) => {
@@ -653,6 +743,11 @@ function canvasPoint(c, e) {
 
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  // 探索中の移動キーはアトラスの操作より先に処理する
+  if (state.explore && state.explorer && state.explorer.key(e.code, true)) {
+    e.preventDefault();
+    return;
+  }
   const step = 60;
   switch (e.key.toLowerCase()) {
     case '1': setAge(230, true); break;
@@ -664,7 +759,9 @@ window.addEventListener('keydown', (e) => {
       break;
     }
     case 'n': if (state.view === 'pixel') descend(null, String(Math.random()).slice(2, 7)); break;
+    case 'e': if (state.view === 'pixel') setExplore(!state.explore); break;
     case 'w': case 'a': case 's': case 'd':
+      // 俯瞰のときは注視点を平行移動する（探索中は上で処理済み）
       if (state.view !== 'pixel' || !vox || !vox.ok) return;
       vox.move(e.key.toLowerCase() === 'w' ? 1 : e.key.toLowerCase() === 's' ? -1 : 0,
                e.key.toLowerCase() === 'd' ? 1 : e.key.toLowerCase() === 'a' ? -1 : 0);
@@ -907,6 +1004,14 @@ $('#reroll').onclick = () => {
   regenerate();
 };
 $('#generate').onclick = () => regenerate();
+
+// インストールして「アプリとして」開けるようにする。
+// file:// では Service Worker が使えないので、http(s) のときだけ登録する
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW 登録に失敗:', err.message));
+  });
+}
 
 buildViewSwitch();
 buildVoxControls();

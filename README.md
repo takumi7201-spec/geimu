@@ -25,11 +25,21 @@
 ## 動かす
 
 ES モジュールを使うので、ファイルを直接開くのではなく HTTP で配信してください。
+サーバは Node だけで動きます（依存パッケージ・python どちらも不要）。
 
 ```bash
-npm start          # python3 -m http.server 8080
-# → http://localhost:8080 を開く
+npm start          # http://localhost:8080 で配信
+npm run dev        # 配信してブラウザも開く
 ```
+
+### アプリとして入れる
+
+PWA なので、ブラウザのアドレスバーの「インストール」からアプリとして入れられます。
+入れると独立したウィンドウで開き、Service Worker が本体をキャッシュするので
+**二回目からはオフラインでも動きます**（世界はその場で生成するので、通信は要りません）。
+
+キャッシュは network-first です。つながっていれば必ず最新を取りに行くので、
+`src/` を書き換えながら開発しても古い版が居座りません。
 
 ### 操作
 
@@ -41,8 +51,14 @@ npm start          # python3 -m http.server 8080
 | 年代スライダー | 2億5000万〜7000万年前を連続で移動。離した時点でその年代の世界を生成 |
 | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | 三畳紀 / ジュラ紀 / 白亜紀 |
 | <kbd>G</kbd> | 2D 地図 → 3D 地球儀 → ピクセル地表 と切替 ・ <kbd>Space</kbd> 自転 |
-| <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> | 地表を歩く ・ <kbd>N</kbd> 別の場所へ降りる |
+| <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> | 地表の視点を動かす ・ <kbd>N</kbd> 別の場所へ降りる |
+| <kbd>E</kbd> | 探索モード（一人称）に出入りする |
 | <kbd>R</kbd> | 再生成 ・ <kbd>L</kbd> 地名 ・ <kbd>F</kbd> 視点リセット |
+
+探索モード中は <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> で歩き、
+<kbd>Space</kbd> で跳び、<kbd>Shift</kbd> で走り、<kbd>V</kbd> で飛行に切り替えます。
+画面をクリックするとマウスで視線を回せます（<kbd>Esc</kbd> で解除。
+ポインタロックが使えない環境ではドラッグで首を振れます）。
 
 2D 地図や 3D 地球儀で地点を調べると、その場所へ降りるボタンが出ます。
 
@@ -77,6 +93,40 @@ WebGL2 があれば使い、無ければ WebGL1 + `OES_element_index_uint` に�
 広さは 2.3〜4.6 km 四方、ドットの粗さは 4 段階。遠景は 2 倍・4 倍のブロックにまとめ、
 草木を置かない距離では地面そのものを樹冠の色で塗って森に見せています。
 
+## 探索モードとゲームへの転用
+
+![ジュラ紀の森を一人称で飛ぶ](docs/images/explore.png)
+
+地表ボクセルには一人称の**探索モード**があります。重力・段差の乗り越え・
+遊泳・飛行があり、幹と岩は壁として止まります（当たり判定は柱の高さマップ
+1 枚だけで済ませているので、4.6km 四方でも軽い）。目線は 2 ブロック＝12m、
+つまり**大型恐竜の視点**です。1 ブロック 6m の世界を人間サイズで歩くと、
+何も動いて見えないためです。
+
+この部分は UI から切り離して `src/game/` にあり、そこだけを import すれば
+別のゲームに持っていけます。
+
+```js
+import { createGameWorld, enterScene, findSpawn } from './src/game/api.js';
+import { Explorer } from './src/game/player.js';
+
+const game  = await createGameWorld({ seed: 'pangaea', ma: 160 });
+const scene = await enterScene(game, null, { size: 'large' });
+const you   = new Explorer(scene, findSpawn(scene));
+const view  = you.update(1 / 60);     // → { eye:[x,y,z], yaw, pitch }
+```
+
+区画は他のエンジンにも書き出せます。
+
+```bash
+node tools/export-scene.mjs --seed pangaea --ma 90 --scene large --out out/
+#   out/90Ma-...json         高さ・水・地表・植生・動物・モデル
+#   out/90Ma-...-height.png  高さマップ（R=上位バイト, G=下位バイト, B=水）
+#   out/90Ma-...-color.png   地表色（そのままテクスチャに使える）
+```
+
+座標系・当たり判定の定数・JSON の読み方は [docs/game-api.md](docs/game-api.md) にあります。
+
 ## 生成されるもの
 
 - **古地理** — 紀ごとの大陸核・内陸海路・造山帯・巨大火成岩石区。三畳紀は C 字のパンゲアと
@@ -106,7 +156,13 @@ node tools/render.mjs --ma 195 --seed pangaea --size large --out out/
 # 白亜紀の降水分布だけを 4096×2048 で
 node tools/render.mjs --era cretaceous --size huge --mode moisture --out out/
 
-# 生成器の検証（決定性と統計レンジ、経度 0 の継ぎ目チェック）
+# 地表の一区画を他のエンジンへ書き出す（JSON + 高さマップ + 地表色）
+node tools/export-scene.mjs --seed pangaea --ma 90 --scene large --out out/
+
+# アプリアイコンを作り直す（16×16 のドット絵を拡大するだけ）
+npm run icons
+
+# 生成器の検証（決定性・統計レンジ・継ぎ目・区画・当たり判定）
 npm test
 ```
 
@@ -127,6 +183,10 @@ src/
 │   ├── blocks.js        ブロックの色・地層・バイオームごとの地表と植生
 │   ├── models.js        樹木・シダ・岩・恐竜のボクセルモデル
 │   └── scene.js         地表区画の生成（地形・水系・地表・植生・動物。DOM 非依存）
+├── game/
+│   ├── api.js           ゲームからの入口（世界・区画・出現地点・問い合わせ・書き出し）
+│   ├── physics.js       高さマップに対する当たり判定と移動（重力・段差・水）
+│   └── player.js        入力を体の動きに変える操作役（DOM 非依存）
 ├── render/
 │   ├── raster.js        世界ラスタの生成（DOM 非依存、CLI と共用）
 │   ├── renderer.js      2D のビュー変換・ラベル・名所・スケールバー
@@ -136,8 +196,15 @@ src/
 │   └── palette.js       カラーランプ
 └── main.js              UI と生成器・描画器の接続
 
+tools/serve.mjs          依存なしの静的サーバ（npm start）
 tools/render.mjs         CLI レンダラ（PNG 書き出し）
-tools/verify.mjs         生成器の検証
+tools/export-scene.mjs   区画の書き出し（JSON / 高さマップ / 地表色）
+tools/make-icons.mjs     アプリアイコン生成
+tools/png.mjs            共用の PNG エンコーダ
+tools/verify.mjs         生成器・区画・当たり判定の検証
+
+sw.js                    Service Worker（オフラインで動かすため）
+manifest.webmanifest     PWA マニフェスト
 .claude/agents/          この世界を育てるためのサブエージェント
 ```
 

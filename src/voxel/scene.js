@@ -130,6 +130,9 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
   const surf = new Uint8Array(n);            // 地表ブロック
   const sub = new Uint8Array(n);             // 地表直下（崖の上端に出る）
   const water = new Int16Array(n).fill(WATER_NONE);
+  // 幹や岩など「通り抜けられないもの」の高さ（ブロック）。
+  // 全ボクセルを持たないので、当たり判定はこの 1 枚で代用する
+  const blockers = new Uint8Array(n);
   const wetness = new Float32Array(n);       // 局所湿潤度（植生密度に使う）
   const biomeAt = new Uint8Array(n);         // GROUND を引くための添字（BIOME_KEYS）
   const biomeKeys = [];
@@ -469,12 +472,10 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
       for (const [k2, wgt] of kinds) { t -= wgt; if (t <= 0) { kind = k2; break; } }
       if (underwater && !['coral', 'algae'].includes(kind)) continue;
       if (!underwater && ['coral', 'algae'].includes(kind)) continue;
-      props.push({
-        m: modelFor(kind, (rand() * 4) | 0),
-        x: i, z: j,
-        y: underwater ? hb + 1 : hb + 1,
-        rot: (rand() * 4) | 0,
-      });
+      const mi = modelFor(kind, (rand() * 4) | 0);
+      props.push({ m: mi, x: i, z: j, y: hb + 1, rot: (rand() * 4) | 0 });
+      const trunk = models[mi].trunk || 0;
+      if (trunk) blockers[i2] = Math.min(255, trunk);
     }
   }
 
@@ -529,7 +530,7 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
     kind: 'voxel',
     seed: world.seed, era: world.era, size, cols, total, blockM: VOX_M,
     x: cx, y: cy, suite, salt,
-    height, surf, sub, water, wetness, biomeAt, biomeKeys,
+    height, surf, sub, water, blockers, wetness, biomeAt, biomeKeys,
     models, props, fauna,
     meta: {
       lat, lon,

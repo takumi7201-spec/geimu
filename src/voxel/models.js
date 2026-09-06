@@ -54,6 +54,7 @@ const ri = (rand, a, b) => a + ((rand() * (b - a + 1)) | 0);
 function araucaria(rand) {
   const m = model(1);
   const h = ri(rand, 5, 9);
+  m.trunk = h;                      // 幹の高さ。探索モードではここが壁になる
   m.box(0, 0, 0, 1, h, 1, B.trunk);
   // 樹冠は板を重ねて作る。1 ブロックずつ置くと箱の数が数十万に膨れるため、
   // 見た目が同じ「四角い層」でまとめる（森 1 面で 10 倍以上軽くなる）
@@ -70,6 +71,7 @@ function araucaria(rand) {
 function swampConifer(rand) {
   const m = model(1);
   const h = ri(rand, 6, 10);
+  m.trunk = h;
   m.box(0, 0, 0, 1, h, 1, B.trunkDark);
   m.box(-1, h - 4, -1, 3, 2, 3, B.conifer);
   m.box(-1, h - 2, 0, 3, 1, 1, B.conifer);
@@ -82,6 +84,7 @@ function swampConifer(rand) {
 function polarConifer(rand) {
   const m = model(1);
   const h = ri(rand, 4, 7);
+  m.trunk = h;
   m.box(0, 0, 0, 1, h, 1, B.trunkDark);
   m.box(-1, h - 2, -1, 3, 2, 3, B.autumnLeaf);
   m.box(0, h, 0, 1, 1, 1, B.autumnLeaf);
@@ -92,6 +95,7 @@ function polarConifer(rand) {
 function broadTree(rand) {
   const m = model(1);
   const h = ri(rand, 3, 6);
+  m.trunk = h;
   m.box(0, 0, 0, 1, h, 1, B.trunk);
   m.box(-2, h, -2, 5, 2, 5, B.broadleaf);
   m.box(-1, h + 2, -1, 3, 1, 3, B.broadleafHi);
@@ -106,6 +110,7 @@ function broadTree(rand) {
 function treeFern(rand) {
   const m = model(1);
   const h = ri(rand, 2, 4);
+  m.trunk = h;
   m.box(0, 0, 0, 1, h, 1, B.trunkDark);
   m.box(-1, h, 0, 3, 1, 1, B.frond);
   m.box(0, h, -1, 1, 1, 3, B.frond);
@@ -117,6 +122,7 @@ function treeFern(rand) {
 function cycad(rand) {
   const m = model(1);
   const h = ri(rand, 1, 2);
+  m.trunk = h;
   m.box(0, 0, 0, 1, h, 1, B.trunkDark);
   m.box(-1, h, -1, 3, 1, 3, B.cycadLeaf);
   if (rand() < 0.6) { m.cell(2, h, 0, B.cycadLeaf); m.cell(-2, h, 0, B.cycadLeaf); }
@@ -162,6 +168,7 @@ function log(rand) {
 function deadTree(rand) {
   const m = model(1);
   const h = ri(rand, 3, 5);
+  m.trunk = h;
   m.box(0, 0, 0, 1, h, 1, B.deadwood);
   m.cell(1, h - 1, 0, B.deadwood);
   if (rand() < 0.6) m.cell(-1, h - 2, 0, B.deadwood);
@@ -197,7 +204,9 @@ function bones(rand) {
 function boulder(rand) {
   const m = model(1);
   const b = rand() < 0.5 ? B.rock : B.rockDark;
-  m.box(0, 0, 0, ri(rand, 1, 2), ri(rand, 1, 2), ri(rand, 1, 2), b);
+  const h = ri(rand, 1, 2);
+  m.trunk = h;                      // 岩も体当たりを止める
+  m.box(0, 0, 0, ri(rand, 1, 2), h, ri(rand, 1, 2), b);
   if (rand() < 0.5) m.cell(1, 0, 1, b);
   return m;
 }

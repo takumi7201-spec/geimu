@@ -1,13 +1,18 @@
 {
   "name": "mesozoic-atlas",
   "version": "0.1.0",
-  "description": "中生代の広大なワールドマップを手続き的に生成するアトラス",
+  "description": "中生代の広大なワールドを手続き的に生成するアトラス／ボクセル探索アプリ",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "python3 -m http.server 8080",
+    "start": "node tools/serve.mjs",
+    "dev": "node tools/serve.mjs --port 8080 --open",
     "render": "node tools/render.mjs",
+    "export": "node tools/export-scene.mjs",
+    "icons": "node tools/make-icons.mjs",
     "test": "node tools/verify.mjs"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

@@ -187,7 +187,10 @@ export class VoxelRenderer {
     this.error = null;
     this.layers = { water: true, plants: true, fauna: true, labels: true, fog: true };
     this.pixelSize = 3;                 // 内部解像度を何分の一にするか（ドットの粗さ）
+    // dist > 0 は俯瞰（注視点まわりの周回）、dist = 0 は一人称。
+    // 一人称では cam.x/y/z が目の位置そのものになる
     this.cam = { yaw: 0.9, pitch: -0.34, dist: 0, x: 0, y: 0, z: 0 };
+    this.firstPerson = false;
     this.time = 0;
     this._initGL();
   }
@@ -466,12 +469,28 @@ export class VoxelRenderer {
   // ---- 視点 ------------------------------------------------------------
 
   rotate(dx, dy) {
+    if (this.firstPerson) return;      // 一人称の視線は Explorer 側が持つ
     this.cam.yaw -= dx * 0.005;
     this.cam.pitch = clamp(this.cam.pitch + dy * 0.004, -1.35, 0.35);
   }
   zoom(f) {
+    if (this.firstPerson) return;
     const s = this.scene;
     this.cam.dist = clamp(this.cam.dist / f, 6, s ? s.total * 0.9 : 400);
+  }
+
+  /** 一人称に切り替える。dist を 0 にすると注視点＝目の位置になる */
+  setFirstPerson(on) {
+    this.firstPerson = on;
+    if (on) this.cam.dist = 0;
+    else if (this.scene) this.resetCamera();
+  }
+
+  /** 探索モードから毎フレーム渡される視点 */
+  setEye(x, y, z, yaw, pitch) {
+    this.cam.x = x; this.cam.y = y; this.cam.z = z;
+    this.cam.yaw = yaw;
+    this.cam.pitch = clamp(pitch, -1.45, 1.45);
   }
   /** 視線方向に focus を動かす（前後左右の移動） */
   move(fwd, side) {
@@ -568,11 +587,19 @@ export class VoxelRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     const { mvp, eye } = this._matrices();
-    const fog = this.fogColor();
     const extent = s.total;
-    const fogRange = this.layers.fog
-      ? [extent * 0.42, extent * 1.30]
-      : [extent * 4, extent * 8];
+    // 目が水面下にあるかどうかで霧を切り替える。
+    // 水中でも空気と同じ霧だと、潜っているのに見通しが変わらず違和感が出る
+    const wi = (clamp(eye[2] | 0, 0, s.total - 1)) * s.total + clamp(eye[0] | 0, 0, s.total - 1);
+    const wl = s.water[wi];
+    const underwater = wl !== WATER_NONE && eye[1] < wl - 0.05;
+    this.underwater = underwater;
+    const fog = underwater ? [0.09, 0.28, 0.42] : this.fogColor();
+    const fogRange = underwater
+      ? [2, 46]
+      : this.layers.fog
+        ? [extent * 0.42, extent * 1.30]
+        : [extent * 4, extent * 8];
 
     // 1. 空（深度は書かない）
     {
@@ -583,7 +610,7 @@ export class VoxelRenderer {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.skyBuf);
       gl.enableVertexAttribArray(loc.aPos);
       gl.vertexAttribPointer(loc.aPos, 2, gl.FLOAT, false, 0, 0);
-      gl.uniform3fv(loc.uTop, this.skyTop());
+      gl.uniform3fv(loc.uTop, this.underwater ? [0.05, 0.18, 0.32] : this.skyTop());
       gl.uniform3fv(loc.uHorizon, fog);
       // 地平線の画面上の高さ（俯角が深いほど上に来る）
       gl.uniform1f(loc.uHorizonY, 0.5 + this.cam.pitch * 0.62);
@@ -647,7 +674,20 @@ export class VoxelRenderer {
     if (!ctx) return;
     const W = this.overlay.width, H = this.overlay.height;
     ctx.clearRect(0, 0, W, H);
-    if (!this.layers.labels || !this.scene) return;
+    if (!this.scene) return;
+    if (this.firstPerson) {
+      // 照準。ドットの粗さに関係なく同じ大きさで出したいので overlay 側に描く
+      const cx = W / 2, cy = H / 2, r = 7;
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy); ctx.lineTo(cx - 2, cy);
+      ctx.moveTo(cx + 2, cy); ctx.lineTo(cx + r, cy);
+      ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy - 2);
+      ctx.moveTo(cx, cy + 2); ctx.lineTo(cx, cy + r);
+      ctx.stroke();
+    }
+    if (!this.layers.labels) return;
     const sx = W / this.canvas.width, sy = H / this.canvas.height;
     const drawn = [];
     const seenName = new Set();

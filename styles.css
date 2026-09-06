@@ -194,6 +194,17 @@ kbd {
 .voxplace i { font-style: normal; color: var(--accent-2); }
 button.mini.wide { width: 100%; padding: 7px; }
 
+#vox-hud {
+  position: absolute; left: 14px; bottom: 14px; pointer-events: none;
+  font: 11px/1.7 ui-monospace, monospace; color: var(--text);
+  background: rgba(10,14,24,.72); border: 1px solid var(--line);
+  padding: 7px 11px; border-radius: 7px; white-space: pre; letter-spacing: .02em;
+}
+#vox-hud.hidden { display: none; }
+#vox-hud b { color: var(--accent); font-weight: 600; }
+#vox-hud i { font-style: normal; color: var(--muted); }
+#vox.explore { cursor: none; }
+
 #gl-error {
   position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
   color: var(--muted); font-size: 13px; padding: 40px; line-height: 2;

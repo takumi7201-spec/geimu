@@ -8,13 +8,18 @@ ES モジュールのみ。生成器はブラウザ API に依存させず、Nod
 マップからは標高・気温・湿潤度・大陸性・火山活動だけを借り、
 汀線・水系・地層・植生・動物はその場で作る（`src/voxel/`）。
 
+`src/game/` は UI から切り離したゲーム層（当たり判定・操作・書き出し）。
+アトラスの探索モードもここを使っている。ゲームに転用する人はここだけを見れば
+済むように保つ（`docs/game-api.md`）。PWA なのでインストールして単独で動く。
+
 ## 動かす・確かめる
 
 ```bash
-npm start                                   # http://localhost:8080
-npm test                                    # 生成器の検証（決定性・統計レンジ・継ぎ目）
+npm start                                   # http://localhost:8080（Node だけで配信）
+npm test                                    # 生成器・区画・当たり判定の検証
 node tools/render.mjs --all --size small --out /tmp/x   # PNG 書き出し
 node tools/render.mjs --ma 195 --size small --out /tmp/x  # 紀と紀のあいだの年代
+node tools/export-scene.mjs --scene small --out /tmp/x  # 区画を JSON と PNG で書き出す
 ```
 
 **変更したら必ず PNG を出して目で見る。** 統計が正常でも絵が破綻していることは頻繁にある。
@@ -79,6 +84,16 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 13. **海面ちょうどの平坦面は市松模様になる。** 汀の勾配を `tanh` で立て、1 ブロックだけの
     孤立した水は埋める。ただし河川と湖は細くても残す（消すと川が砂の溝になる）。
 
+14. **1 ブロック 6m の世界を人間サイズで歩かせない。** 身長 1.7m は 0.28 ブロックしかなく、
+    歩いても景色が動かない。目線は 2 ブロック（＝大型恐竜）を既定にしている（`PHYS`）。
+
+15. **当たり判定は柱の高さマップだけで済ませる。** 幹と岩は `scene.blockers`（列ごとの
+    高さ）で壁にする。全ボクセルを持つと 4.6km 四方で数億個になる。
+    blockers の上には立てない（木の天辺に乗れてしまう）。
+
+16. **Service Worker は network-first。** cache-first にすると、直した `src/*.js` が
+    反映されずに何時間も悩むことになる。版を上げるときは `sw.js` の `VERSION` も上げる。
+
 ## 健全性の目安
 
 - 陸地率：三畳紀 30±4% / ジュラ紀 27±4% / 白亜紀 20±4%
@@ -99,6 +114,9 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 - `globe-engineer` — `render/globe.js` の 3D 地球儀とシェーダ
 - `voxel-builder` — `voxel/` と `render/voxelview.js` の地表ボクセル
 - `world-qa` — 検証と報告（コードは直さない）
+
+ゲーム層（`src/game/`）は担当エージェントを置いていない。触るときは
+`voxel-builder` と同じ約束（縮尺・高さマップ・DOM 非依存）を守ること。
 
 ## コード方針
 
