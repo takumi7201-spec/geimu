@@ -5,3 +5,4 @@ out/
 # アプリアイコンは配布物（npm run icons で作り直せる）
 !icons/*.png
 .DS_Store
+package-lock.json
