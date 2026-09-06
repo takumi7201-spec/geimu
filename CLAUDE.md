@@ -16,6 +16,7 @@ ES モジュールのみ。生成器はブラウザ API に依存させず、Nod
 
 ```bash
 npm start                                   # http://localhost:8080（Node だけで配信）
+npm run bundle                              # dist/mesozoic-atlas.html（file:// で動く 1 枚版）
 npm test                                    # 生成器・区画・当たり判定の検証
 node tools/render.mjs --all --size small --out /tmp/x   # PNG 書き出し
 node tools/render.mjs --ma 195 --size small --out /tmp/x  # 紀と紀のあいだの年代
@@ -93,6 +94,19 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 
 16. **Service Worker は network-first。** cache-first にすると、直した `src/*.js` が
     反映されずに何時間も悩むことになる。版を上げるときは `sw.js` の `VERSION` も上げる。
+
+17. **単一ファイル版はモジュールを IIFE に閉じる。** `tools/bundle.mjs` は全モジュールを
+    ひとつの inline `<script type="module">` に連結する（file:// では外部 import が
+    CORS で弾かれ、インラインだけが通るため）。ただの連結だと `nextTick` `compile`
+    `program` のような非公開ヘルパが名前でぶつかるので、モジュールごとに
+    `const { 公開名 } = await (async () => { ... })();` で包んで公開名だけ外へ出す。
+    素通しの再エクスポート（renderer.js の `VIEW_MODES`）を公開名に含めると
+    二重宣言になるので、strip 後に実際に宣言された名前だけを返す。
+
+18. **file:// を壊す三つ。** Service Worker 登録（`location.protocol` で門番済み）、
+    `fetch` によるアセット読み込み、外部 CSS。生成器はどれも使っていないので
+    1 枚に畳める。この前提を崩す変更を入れるときは `npm run bundle` の結果を
+    file:// で開いて確かめること。
 
 ## 健全性の目安
 

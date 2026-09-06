@@ -24,12 +24,24 @@
 
 ## 動かす
 
-ES モジュールを使うので、ファイルを直接開くのではなく HTTP で配信してください。
+### いちばん簡単 — HTML を 1 枚ダブルクリックする
+
+**`dist/mesozoic-atlas.html` は全部入りの単一ファイルです。サーバも Node も要りません。**
+ダウンロードしてダブルクリックすれば、地図も地球儀も探索モードもそのまま動きます。
+
+ふつう ES モジュールは `file://` から読み込めません（ブラウザが CORS で拒む）が、
+この版は全モジュールを HTML の中に畳んであるので制約を受けません。
+Service Worker の登録も `http` のときだけ走るようにしてあります。
+
+### 開発するとき — HTTP で配信する
+
+`src/` をそのまま読む版は ES モジュールなので配信が要ります。
 サーバは Node だけで動きます（依存パッケージ・python どちらも不要）。
 
 ```bash
 npm start          # http://localhost:8080 で配信
 npm run dev        # 配信してブラウザも開く
+npm run bundle     # dist/mesozoic-atlas.html を作り直す
 ```
 
 ### アプリとして入れる
@@ -197,11 +209,13 @@ src/
 └── main.js              UI と生成器・描画器の接続
 
 tools/serve.mjs          依存なしの静的サーバ（npm start）
+tools/bundle.mjs         単一 HTML への畳み込み（npm run bundle）
 tools/render.mjs         CLI レンダラ（PNG 書き出し）
 tools/export-scene.mjs   区画の書き出し（JSON / 高さマップ / 地表色）
 tools/make-icons.mjs     アプリアイコン生成
 tools/png.mjs            共用の PNG エンコーダ
 tools/verify.mjs         生成器・区画・当たり判定の検証
+dist/mesozoic-atlas.html サーバ不要の 1 枚版（生成物・コミット済み）
 
 sw.js                    Service Worker（オフラインで動かすため）
 manifest.webmanifest     PWA マニフェスト

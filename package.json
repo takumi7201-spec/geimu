@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "start": "node tools/serve.mjs",
+    "bundle": "node tools/bundle.mjs",
     "dev": "node tools/serve.mjs --port 8080 --open",
     "render": "node tools/render.mjs",
     "export": "node tools/export-scene.mjs",
