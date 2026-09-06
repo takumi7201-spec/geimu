@@ -16,8 +16,21 @@
     </header>
 
     <section class="panel">
-      <h2>紀</h2>
+      <h2>表示方式</h2>
+      <div class="viewswitch" id="viewswitch">
+        <button data-view="2d" class="on">2D 地図</button>
+        <button data-view="3d">3D 地球儀</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>年代</h2>
       <div class="era-tabs" id="era-tabs"></div>
+      <div class="timeline">
+        <input id="age" type="range" min="70" max="250" step="1" value="160">
+        <div class="ticks" id="age-ticks"></div>
+        <div class="agebox"><b id="age-label">160</b> 百万年前</div>
+      </div>
       <p class="era-desc" id="era-desc"></p>
     </section>
 
@@ -54,13 +67,16 @@
     </section>
 
     <footer class="hint">
-      ドラッグで移動 / ホイールでズーム / クリックで地点を調査<br>
-      キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 紀切替 ・ <kbd>R</kbd> 再生成 ・ <kbd>L</kbd> ラベル ・ <kbd>F</kbd> 全体表示
+      ドラッグで移動・回転 / ホイールでズーム / クリックで地点を調査<br>
+      キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 紀切替 ・ <kbd>G</kbd> 2D/3D ・ <kbd>R</kbd> 再生成<br>
+      <kbd>L</kbd> ラベル ・ <kbd>F</kbd> 全体表示 ・ <kbd>Space</kbd> 自転
     </footer>
   </aside>
 
   <main id="stage">
     <canvas id="map"></canvas>
+    <canvas id="globe" class="hidden"></canvas>
+    <canvas id="globe-overlay" class="hidden"></canvas>
     <div id="minimap-wrap"><canvas id="minimap" width="240" height="120"></canvas></div>
     <div id="inspector" class="hidden"></div>
     <div id="progress" class="hidden"><div class="bar"><i></i></div><span></span></div>

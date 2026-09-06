@@ -9,6 +9,7 @@ ES モジュールのみ。生成器はブラウザ API に依存させず、Nod
 npm start                                   # http://localhost:8080
 npm test                                    # 生成器の検証（決定性・統計レンジ・継ぎ目）
 node tools/render.mjs --all --size small --out /tmp/x   # PNG 書き出し
+node tools/render.mjs --ma 195 --size small --out /tmp/x  # 紀と紀のあいだの年代
 ```
 
 **変更したら必ず PNG を出して目で見る。** 統計が正常でも絵が破綻していることは頻繁にある。
@@ -19,6 +20,8 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 ```
 
 `python3 -m http.server` で配信し、`#progress` が hidden になるまで待ってから撮影する。
+3D を見るときはヘッドレスに GPU が無いので SwiftShader を明示する:
+`args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']`
 
 ## 踏みやすい落とし穴
 
@@ -45,7 +48,14 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 6. **キャンバスに絵文字や特殊記号を描かない。** フォント依存で豆腐になる。
    名所の記号は `drawMarkGlyph()` でベクタ描画している。
 
-7. **大陸地殻の上の海は深海にしない。** `cont > 0.45` の水域は水深によらず内海として扱う。
+7. **中間年代で山脈を潰さない。** 同じ id の造山帯は高さを混ぜるのではなく
+   折れ線そのものを補間する。単純な高さのクロスフェードだと、紀と紀のちょうど
+   中間ですべての山脈が半分の高さになる。
+
+8. **3D の半透明パスでは深度書き込みを切る**（`depthMask(false)`）。
+   戻し忘れると次のフレームで地形が描かれず、画面が真っ黒になる。
+
+9. **大陸地殻の上の海は深海にしない。** `cont > 0.45` の水域は水深によらず内海として扱う。
    西部内陸海路のような陸棚海を正しく出すために必要。
 
 ## 健全性の目安
@@ -62,7 +72,8 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 - `paleo-geographer` — `eras.js` の古地理データ
 - `terrain-tuner` — `worldgen.js` / `hydrology.js` のアルゴリズム
 - `biome-ecologist` — `biomes.js` / `fauna.js`
-- `map-cartographer` — `render/` と UI
+- `map-cartographer` — `render/raster.js` `renderer.js` と UI
+- `globe-engineer` — `render/globe.js` の 3D 地球儀とシェーダ
 - `world-qa` — 検証と報告（コードは直さない）
 
 ## コード方針

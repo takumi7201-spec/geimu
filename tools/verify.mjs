@@ -10,6 +10,7 @@ import { generateWorld } from '../src/world/worldgen.js';
 import { buildRegions, buildLandmarks } from '../src/world/regions.js';
 import { BIOMES } from '../src/world/biomes.js';
 import { ERAS } from '../src/world/eras.js';
+import { eraAtAge, AGE_MIN, AGE_MAX } from '../src/world/timeline.js';
 
 const argSeeds = Number((process.argv.find((a, i) => process.argv[i - 1] === '--seeds') || 4));
 const SEEDS = ['pangaea', 'tethys', 'gondwana', 'panthalassa', 'laurasia', 'deccan'].slice(0, Math.max(2, argSeeds));
@@ -97,6 +98,54 @@ for (const era of ERAS) {
       `${s.meanTemp.toFixed(1)}℃  大陸 ${regions.landmasses.filter((l) => l.kind === 'continent').length}  ` +
       `島 ${regions.landmasses.filter((l) => l.kind === 'island').length}  名所 ${marks.length}`);
   }
+}
+
+// ---- 3. 年代軸の連続性 -------------------------------------------------
+console.log('\n[年代軸]');
+{
+  // プレート id は紀をまたいで一貫していること
+  for (const era of ERAS) {
+    const ids = era.cratons.map((c) => c.id);
+    if (new Set(ids).size !== ids.length) fail(`${era.id}: 大陸核の id が重複している`);
+    if (ids.some((i) => !i)) fail(`${era.id}: id の無い大陸核がある`);
+  }
+
+  // 補間した年代でも古地理が壊れないこと
+  let prevLand = null, prevPos = null;
+  for (let ma = AGE_MAX; ma >= AGE_MIN; ma -= 10) {
+    const e = eraAtAge(ma);
+    if (!e.cratons.length || !e.provinces.length) { fail(`${ma}Ma: 古地理が空`); continue; }
+    if (e.belts.some((b) => b.h > 1.2 || b.h < 0)) fail(`${ma}Ma: 造山帯の高さが範囲外`);
+    // プレートは飛ばずに動くこと（10Ma で経度 5% 以上跳ねたら補間が壊れている）
+    const laur = e.cratons.find((c) => c.id === 'laurentia');
+    if (laur && prevPos != null) {
+      let d = Math.abs(laur.x - prevPos);
+      if (d > 0.5) d = 1 - d;
+      if (d > 0.05) fail(`${ma}Ma: laurentia が 10Ma で経度 ${(d * 100).toFixed(1)}% 跳んだ`);
+    }
+    if (laur) prevPos = laur.x;
+  }
+  pass(`${AGE_MIN}〜${AGE_MAX}Ma を 10Ma 刻みで補間し、プレートが連続して動く`);
+
+  // 中間年代でも山脈がつぶれないこと
+  for (const ma of [195, 125]) {
+    const w = await generateWorld({ seed: 'pangaea', ma, size: 'small' });
+    const peak = Math.round(w.stats.maxElev * 4600);
+    if (peak < 3000) fail(`${ma}Ma: 最高峰が ${peak}m しかない（造山帯の補間が潰れている）`);
+    if (w.stats.landRatio < 0.14 || w.stats.landRatio > 0.40) fail(`${ma}Ma: 陸地率 ${(w.stats.landRatio * 100).toFixed(1)}% が範囲外`);
+    console.log(`  · ${ma}Ma  陸地 ${(w.stats.landRatio * 100).toFixed(1)}%  最高峰 ${peak}m  ${w.era.name}`);
+  }
+
+  // 陸地率は時代とともに単調に近く減る（海進が進む）
+  const lands = [];
+  for (const ma of [230, 195, 160, 125, 90]) {
+    const w = await generateWorld({ seed: 'pangaea', ma, size: 'small' });
+    lands.push(w.stats.landRatio);
+  }
+  for (let i = 1; i < lands.length; i++) {
+    if (lands[i] > lands[i - 1] + 0.02) fail(`陸地率が時代とともに増えている（${lands.map((v) => (v * 100).toFixed(1)).join(' → ')}）`);
+  }
+  pass(`海進の傾向：陸地率 ${lands.map((v) => (v * 100).toFixed(1) + '%').join(' → ')}`);
 }
 
 console.log('');

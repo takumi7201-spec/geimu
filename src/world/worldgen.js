@@ -14,6 +14,7 @@
 
 import { Noise, clamp, smoothstep, wrapDelta, rngFromSeed } from '../core/rng.js';
 import { getEra } from './eras.js';
+import { eraAtAge } from './timeline.js';
 import { classify, BIOME_IDS, BIOME_INDEX } from './biomes.js';
 import { fillDepressions, accumulateFlow, detectLakes } from './hydrology.js';
 
@@ -115,14 +116,16 @@ const nextTick = () =>
 
 /**
  * 世界を生成する。
- * @param {{seed:string, eraId:string, size:string}} opts
+ * `ma`（百万年前）を渡すと、紀と紀のあいだの年代も生成できる。
+ * 指定がなければ eraId の紀の代表年代を使う。
+ * @param {{seed:string, eraId?:string, ma?:number, size:string}} opts
  * @param {(p:number, label:string)=>void} [onProgress]
  */
 export async function generateWorld(opts, onProgress = () => {}) {
-  const { seed = 'mesozoic', eraId = 'jurassic', size = 'medium' } = opts;
+  const { seed = 'mesozoic', eraId = 'jurassic', size = 'medium', ma = null } = opts;
   const dim = SIZES[size] || SIZES.medium;
   const w = dim.w, h = dim.h, n = w * h;
-  const era = getEra(eraId);
+  const era = ma == null ? getEra(eraId) : eraAtAge(ma);
 
   const nContinent = new Noise(seed + ':continent');
   const nDetail = new Noise(seed + ':detail');
@@ -145,7 +148,7 @@ export async function generateWorld(opts, onProgress = () => {}) {
   const CHUNK = Math.max(8, (65536 / w) | 0);
 
   // 外洋の島弧・海台。行ごとに候補を絞ってから評価する
-  const islands = scatterIslands(era, rngFromSeed(seed + ':islands'), 26);
+  const islands = scatterIslands(era, rngFromSeed(`${seed}:islands:${Math.round(era.ma ?? 0)}`), 26);
   const islandRows = Array.from({ length: h }, () => []);
   for (const b of islands) {
     const y0 = Math.max(0, Math.floor((b.y - b.ry) * h));
@@ -236,7 +239,7 @@ export async function generateWorld(opts, onProgress = () => {}) {
         // 火山区。輪郭をノイズで崩して円形に見せない
         let vAmt = 0;
         for (const v of era.volcanoes) {
-          const t = volcanoInfluence(fx, fy, v) * clamp(0.72 + shape * 0.5 + edge * 0.55, 0, 1.4);
+          const t = volcanoInfluence(fx, fy, v) * (v.w ?? 1) * clamp(0.72 + shape * 0.5 + edge * 0.55, 0, 1.4);
           if (t > vAmt) vAmt = t;
         }
         if (vAmt > 0) hv += vAmt * (land > 0 ? 0.20 : 0.28) * clamp(land + 0.35, 0, 1);
