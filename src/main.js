@@ -60,6 +60,11 @@ const PREF = {
   // 上下反転が既定。指で世界を掴んで動かす向きに揃える
   get invertY() { try { return localStorage.getItem('mz.invertY') !== '0'; } catch { return true; } },
   set invertY(v) { try { localStorage.setItem('mz.invertY', v ? '1' : '0'); } catch { /* 保存できなくても操作は効く */ } },
+  // 指でなぞる量に対する首の振れ。指の大きさも画面の広さも人によるので変えられる
+  get lookSpeed() {
+    try { return (Number(localStorage.getItem('mz.lookSpeed')) || 180) / 100; } catch { return 1.8; }
+  },
+  set lookSpeed(v) { try { localStorage.setItem('mz.lookSpeed', String(Math.round(v * 100))); } catch { /* 同上 */ } },
 };
 
 /** 視点の設定を、いま生きている描画側すべてに配る */
@@ -1085,8 +1090,9 @@ let stickOn = new Set();
 let stickId = null;
 
 function resetStick() {
-  const knob = document.querySelector('#stick i');
-  if (knob) knob.style.transform = '';
+  const pad = document.getElementById('stick');
+  if (pad) { pad.classList.remove('on'); pad.querySelector('i').style.transform = ''; }
+  document.getElementById('touch')?.classList.remove('holding');
   for (const code of stickOn) state.explorer?.key(code, false);
   stickOn = new Set();
   stickId = null;
@@ -1099,16 +1105,39 @@ function stickSet(next) {
   stickOn = next;
 }
 
+// 左下の広い範囲。触れた所にスティックが出る。定位置だと、少しずれた指では
+// 歩き出せず、そのたびに画面を見て置き直すことになる
 {
+  const zone = $('#tmove');
+  const wrap = $('#touch');
   const pad = $('#stick');
   const knob = pad.querySelector('i');
-  const R = 34;        // つまみが動ける半径
-  const DEAD = 11;     // ここまでは止まったまま（指を置いただけで歩き出さない）
+  const R = 42;       // つまみが動ける半径
+  const DEAD = 13;    // ここまでは止まったまま（指を置いただけで歩き出さない）
 
-  const move = (e) => {
-    const r = pad.getBoundingClientRect();
-    const dx = e.clientX - (r.left + r.width / 2);
-    const dy = e.clientY - (r.top + r.height / 2);
+  const at = (e) => {
+    const r = wrap.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  let origin = null;
+
+  zone.addEventListener('pointerdown', (e) => {
+    if (stickId !== null) return;
+    stickId = e.pointerId;
+    try { zone.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
+    origin = at(e);
+    pad.style.left = `${origin.x}px`;
+    pad.style.top = `${origin.y}px`;
+    pad.classList.add('on');
+    wrap.classList.add('holding');
+    knob.style.transform = '';
+    e.preventDefault();
+  });
+
+  zone.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== stickId || !origin) return;
+    const p = at(e);
+    const dx = p.x - origin.x, dy = p.y - origin.y;
     const len = Math.hypot(dx, dy) || 1;
     const k = Math.min(1, R / len);
     knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
@@ -1121,23 +1150,38 @@ function stickSet(next) {
       if (dx > DEAD * 0.6) next.add(STICK_KEYS.right);
     }
     stickSet(next);
-  };
+    e.preventDefault();
+  });
 
-  pad.addEventListener('pointerdown', (e) => {
-    stickId = e.pointerId;
-    try { pad.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
-    move(e);
-    e.preventDefault();
-  });
-  pad.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== stickId) return;
-    move(e);
-    e.preventDefault();
-  });
   const end = (e) => { if (e.pointerId === stickId) resetStick(); };
-  pad.addEventListener('pointerup', end);
-  pad.addEventListener('pointercancel', end);
-  pad.addEventListener('lostpointercapture', end);
+  zone.addEventListener('pointerup', end);
+  zone.addEventListener('pointercancel', end);
+  zone.addEventListener('lostpointercapture', end);
+}
+
+// 右半分は視線。移動と別の面に分けておかないと、歩きながら振り向けない
+{
+  const zone = $('#tlook');
+  let lookId = null, lx = 0, ly = 0;
+  zone.addEventListener('pointerdown', (e) => {
+    if (lookId !== null) return;
+    lookId = e.pointerId;
+    lx = e.clientX; ly = e.clientY;
+    try { zone.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
+    e.preventDefault();
+  });
+  zone.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== lookId || !state.explorer) return;
+    const k = PREF.lookSpeed;
+    state.explorer.look((e.clientX - lx) * k, (e.clientY - ly) * k);
+    lx = e.clientX; ly = e.clientY;
+    draw();
+    e.preventDefault();
+  });
+  const end = (e) => { if (e.pointerId === lookId) lookId = null; };
+  zone.addEventListener('pointerup', end);
+  zone.addEventListener('pointercancel', end);
+  zone.addEventListener('lostpointercapture', end);
 }
 
 {
@@ -1379,3 +1423,13 @@ $('#sprite-reset').addEventListener('click', () => {
 
 loadSavedSprites();
 buildSpriteSlots();
+
+// 指の端末にだけ関わる設定を出す（マウスでは意味がない）
+if (IS_TOUCH) document.body.classList.add('touch');
+{
+  const sl = $('#look-speed');
+  if (sl) {
+    sl.value = String(Math.round(PREF.lookSpeed * 100));
+    sl.addEventListener('input', () => { PREF.lookSpeed = Number(sl.value) / 100; });
+  }
+}

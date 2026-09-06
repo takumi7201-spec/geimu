@@ -19,10 +19,16 @@ npm start                                   # http://localhost:8080（Node だ�
 npm run bundle                              # dist/mesozoic-atlas.html（file:// で動く 1 枚版）
 npm run sprites                             # assets/fauna/*.png → src/voxel/sprites.js
 npm test                                    # 生成器・区画・当たり判定の検証
+npm run uitest                              # ブラウザでの操作（スマホ／PC）の検証
 node tools/render.mjs --all --size small --out /tmp/x   # PNG 書き出し
 node tools/render.mjs --ma 195 --size small --out /tmp/x  # 紀と紀のあいだの年代
 node tools/export-scene.mjs --scene small --out /tmp/x  # 区画を JSON と PNG で書き出す
 ```
+
+**操作にさわったら `npm run uitest`。** 指の操作は、ハンドラが呼ばれるかを
+JS で合成した PointerEvent で見ても意味がない ―― `touch-action`、同時に触れた
+指の取り合い、要素の重なりといった、実機で効く部分をすり抜ける。
+uitest は CDP の `Input.dispatchTouchEvent` で本物のタッチを送る。
 
 **変更したら必ず PNG を出して目で見る。** 統計が正常でも絵が破綻していることは頻繁にある。
 ブラウザ側の確認は Playwright で行う（Chromium は同梱、`npx playwright install` は不要）:
@@ -142,6 +148,14 @@ chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/c
 
 25. **絵の差し替えは板だけ作り直す（`refreshSprites`）。** 地形は変わっていないのに
     区画ごと組み直すと、数百万の柱を無駄に積み直して数秒固まる。
+
+26. **タッチのスティックを定位置に置かない。** 定位置だと、指が少しずれただけで
+    歩き出せず、そのたびに画面を見て置き直すことになる。左下の広い面のどこに
+    触れてもそこに出す。移動の面と視線の面を分けておかないと、歩きながら
+    振り向けない。
+
+27. **画面の下端に操作を寄せない。** 実機の下には端末の UI（ホームバーなど）が
+    乗る。`env(safe-area-inset-bottom)` を足した余白を取る。
 
 ## 健全性の目安
 

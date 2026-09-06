@@ -237,31 +237,48 @@ button.mini.wide { width: 100%; padding: 7px; }
 #touch { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
 #touch.hidden { display: none; }
 
-#stick {
-  position: absolute; left: 18px; bottom: 22px;
-  width: 122px; height: 122px; border-radius: 50%;
-  background: rgba(10,16,28,0.34); border: 2px solid rgba(190,214,240,0.34);
+/* 触った所にスティックが出る。定位置だと、少しずれただけで歩けない */
+#tlook {
+  position: absolute; right: 0; top: 0; width: 50%; height: 100%;
   pointer-events: auto; touch-action: none;
 }
-#stick i {
-  position: absolute; left: 50%; top: 50%; width: 50px; height: 50px;
-  margin: -25px 0 0 -25px; border-radius: 50%;
-  background: rgba(206,226,248,0.60); border: 2px solid rgba(255,255,255,0.45);
-  transition: transform 0.06s linear;
+#tmove {
+  position: absolute; left: 0; bottom: 0; width: 52%; height: 66%;
+  pointer-events: auto; touch-action: none;
 }
+#stick {
+  position: absolute; width: 128px; height: 128px; margin: -64px 0 0 -64px;
+  border-radius: 50%; opacity: 0; transition: opacity .12s;
+  background: rgba(10,16,28,0.30); border: 2px solid rgba(190,214,240,0.30);
+  pointer-events: none; touch-action: none;
+}
+#stick.on { opacity: 1; }
+#stick i {
+  position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+  margin: -26px 0 0 -26px; border-radius: 50%;
+  background: rgba(206,226,248,0.62); border: 2px solid rgba(255,255,255,0.48);
+}
+/* 指を置く前の目印。どこを触ればよいか分かるように薄く出す */
+#tmove::after {
+  content: ''; position: absolute; left: 26px; bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+  width: 106px; height: 106px; border-radius: 50%;
+  border: 2px dashed rgba(190,214,240,0.20);
+}
+#touch.holding #tmove::after { opacity: 0; }
+
 #tbtns {
-  position: absolute; right: 16px; bottom: 22px;
-  display: grid; grid-template-columns: repeat(2, 66px); gap: 10px;
-  pointer-events: auto;
+  position: absolute; right: 14px; bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+  display: grid; grid-template-columns: repeat(2, 68px); gap: 11px;
+  pointer-events: auto; z-index: 2;
 }
 #tbtns button {
-  width: 66px; height: 66px; border-radius: 50%;
-  background: rgba(10,16,28,0.40); color: #eaf2ff;
-  border: 2px solid rgba(190,214,240,0.36);
+  width: 68px; height: 68px; border-radius: 50%;
+  background: rgba(10,16,28,0.44); color: #eaf2ff;
+  border: 2px solid rgba(190,214,240,0.38);
   font: 600 17px/1 "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
   touch-action: none; -webkit-tap-highlight-color: transparent;
 }
-#tbtns button.on { background: rgba(120,190,255,0.46); border-color: rgba(220,240,255,0.7); }
+#tbtns button.on { background: rgba(120,190,255,0.46); border-color: rgba(220,240,255,0.72); }
 
 @media (max-width: 860px) {
   /* 画面の下半分は操作盤の場所。状態表示は上へ逃がす */
@@ -314,3 +331,7 @@ button.mini.wide { width: 100%; padding: 7px; }
   .sprite-slot canvas { width: 52px; height: 52px; }
   .sprite-slot button { padding: 11px 14px; font-size: 12px; }
 }
+
+/* 指の端末にだけ出す設定 */
+.touch-only { display: none; }
+body.touch .touch-only { display: revert; }

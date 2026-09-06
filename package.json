@@ -12,7 +12,8 @@
     "export": "node tools/export-scene.mjs",
     "icons": "node tools/make-icons.mjs",
     "sprites": "node tools/sprites.mjs",
-    "test": "node tools/verify.mjs"
+    "test": "node tools/verify.mjs",
+    "uitest": "node tools/uitest.mjs"
   },
   "engines": {
     "node": ">=18"

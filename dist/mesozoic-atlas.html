@@ -250,31 +250,48 @@ button.mini.wide { width: 100%; padding: 7px; }
 #touch { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
 #touch.hidden { display: none; }
 
-#stick {
-  position: absolute; left: 18px; bottom: 22px;
-  width: 122px; height: 122px; border-radius: 50%;
-  background: rgba(10,16,28,0.34); border: 2px solid rgba(190,214,240,0.34);
+/* 触った所にスティックが出る。定位置だと、少しずれただけで歩けない */
+#tlook {
+  position: absolute; right: 0; top: 0; width: 50%; height: 100%;
   pointer-events: auto; touch-action: none;
 }
-#stick i {
-  position: absolute; left: 50%; top: 50%; width: 50px; height: 50px;
-  margin: -25px 0 0 -25px; border-radius: 50%;
-  background: rgba(206,226,248,0.60); border: 2px solid rgba(255,255,255,0.45);
-  transition: transform 0.06s linear;
+#tmove {
+  position: absolute; left: 0; bottom: 0; width: 52%; height: 66%;
+  pointer-events: auto; touch-action: none;
 }
+#stick {
+  position: absolute; width: 128px; height: 128px; margin: -64px 0 0 -64px;
+  border-radius: 50%; opacity: 0; transition: opacity .12s;
+  background: rgba(10,16,28,0.30); border: 2px solid rgba(190,214,240,0.30);
+  pointer-events: none; touch-action: none;
+}
+#stick.on { opacity: 1; }
+#stick i {
+  position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+  margin: -26px 0 0 -26px; border-radius: 50%;
+  background: rgba(206,226,248,0.62); border: 2px solid rgba(255,255,255,0.48);
+}
+/* 指を置く前の目印。どこを触ればよいか分かるように薄く出す */
+#tmove::after {
+  content: ''; position: absolute; left: 26px; bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+  width: 106px; height: 106px; border-radius: 50%;
+  border: 2px dashed rgba(190,214,240,0.20);
+}
+#touch.holding #tmove::after { opacity: 0; }
+
 #tbtns {
-  position: absolute; right: 16px; bottom: 22px;
-  display: grid; grid-template-columns: repeat(2, 66px); gap: 10px;
-  pointer-events: auto;
+  position: absolute; right: 14px; bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+  display: grid; grid-template-columns: repeat(2, 68px); gap: 11px;
+  pointer-events: auto; z-index: 2;
 }
 #tbtns button {
-  width: 66px; height: 66px; border-radius: 50%;
-  background: rgba(10,16,28,0.40); color: #eaf2ff;
-  border: 2px solid rgba(190,214,240,0.36);
+  width: 68px; height: 68px; border-radius: 50%;
+  background: rgba(10,16,28,0.44); color: #eaf2ff;
+  border: 2px solid rgba(190,214,240,0.38);
   font: 600 17px/1 "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
   touch-action: none; -webkit-tap-highlight-color: transparent;
 }
-#tbtns button.on { background: rgba(120,190,255,0.46); border-color: rgba(220,240,255,0.7); }
+#tbtns button.on { background: rgba(120,190,255,0.46); border-color: rgba(220,240,255,0.72); }
 
 @media (max-width: 860px) {
   /* 画面の下半分は操作盤の場所。状態表示は上へ逃がす */
@@ -327,6 +344,10 @@ button.mini.wide { width: 100%; padding: 7px; }
   .sprite-slot canvas { width: 52px; height: 52px; }
   .sprite-slot button { padding: 11px 14px; font-size: 12px; }
 }
+
+/* 指の端末にだけ出す設定 */
+.touch-only { display: none; }
+body.touch .touch-only { display: revert; }
 
 </style>
 </head>
@@ -388,6 +409,10 @@ button.mini.wide { width: 100%; padding: 7px; }
         <span>区画の広さ</span>
         <select id="vox-size"></select>
       </label>
+      <label class="field touch-only">
+        <span>視点の速さ</span>
+        <input id="look-speed" type="range" min="60" max="320" step="10" value="180">
+      </label>
       <label class="field">
         <span>ドットの粗さ</span>
         <select id="vox-pixel">
@@ -444,6 +469,8 @@ button.mini.wide { width: 100%; padding: 7px; }
     <div id="inspector" class="hidden"></div>
     <div id="vox-hud" class="hidden"></div>
     <div id="touch" class="hidden">
+      <div id="tlook"></div>
+      <div id="tmove"></div>
       <div id="stick"><i></i></div>
       <div id="tbtns">
         <button data-act="jump">跳</button>
@@ -5972,6 +5999,11 @@ const PREF = {
   // 上下反転が既定。指で世界を掴んで動かす向きに揃える
   get invertY() { try { return localStorage.getItem('mz.invertY') !== '0'; } catch { return true; } },
   set invertY(v) { try { localStorage.setItem('mz.invertY', v ? '1' : '0'); } catch { /* 保存できなくても操作は効く */ } },
+  // 指でなぞる量に対する首の振れ。指の大きさも画面の広さも人によるので変えられる
+  get lookSpeed() {
+    try { return (Number(localStorage.getItem('mz.lookSpeed')) || 180) / 100; } catch { return 1.8; }
+  },
+  set lookSpeed(v) { try { localStorage.setItem('mz.lookSpeed', String(Math.round(v * 100))); } catch { /* 同上 */ } },
 };
 
 /** 視点の設定を、いま生きている描画側すべてに配る */
@@ -6997,8 +7029,9 @@ let stickOn = new Set();
 let stickId = null;
 
 function resetStick() {
-  const knob = document.querySelector('#stick i');
-  if (knob) knob.style.transform = '';
+  const pad = document.getElementById('stick');
+  if (pad) { pad.classList.remove('on'); pad.querySelector('i').style.transform = ''; }
+  document.getElementById('touch')?.classList.remove('holding');
   for (const code of stickOn) state.explorer?.key(code, false);
   stickOn = new Set();
   stickId = null;
@@ -7011,16 +7044,39 @@ function stickSet(next) {
   stickOn = next;
 }
 
+// 左下の広い範囲。触れた所にスティックが出る。定位置だと、少しずれた指では
+// 歩き出せず、そのたびに画面を見て置き直すことになる
 {
+  const zone = $('#tmove');
+  const wrap = $('#touch');
   const pad = $('#stick');
   const knob = pad.querySelector('i');
-  const R = 34;        // つまみが動ける半径
-  const DEAD = 11;     // ここまでは止まったまま（指を置いただけで歩き出さない）
+  const R = 42;       // つまみが動ける半径
+  const DEAD = 13;    // ここまでは止まったまま（指を置いただけで歩き出さない）
 
-  const move = (e) => {
-    const r = pad.getBoundingClientRect();
-    const dx = e.clientX - (r.left + r.width / 2);
-    const dy = e.clientY - (r.top + r.height / 2);
+  const at = (e) => {
+    const r = wrap.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  let origin = null;
+
+  zone.addEventListener('pointerdown', (e) => {
+    if (stickId !== null) return;
+    stickId = e.pointerId;
+    try { zone.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
+    origin = at(e);
+    pad.style.left = `${origin.x}px`;
+    pad.style.top = `${origin.y}px`;
+    pad.classList.add('on');
+    wrap.classList.add('holding');
+    knob.style.transform = '';
+    e.preventDefault();
+  });
+
+  zone.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== stickId || !origin) return;
+    const p = at(e);
+    const dx = p.x - origin.x, dy = p.y - origin.y;
     const len = Math.hypot(dx, dy) || 1;
     const k = Math.min(1, R / len);
     knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
@@ -7033,23 +7089,38 @@ function stickSet(next) {
       if (dx > DEAD * 0.6) next.add(STICK_KEYS.right);
     }
     stickSet(next);
-  };
+    e.preventDefault();
+  });
 
-  pad.addEventListener('pointerdown', (e) => {
-    stickId = e.pointerId;
-    try { pad.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
-    move(e);
-    e.preventDefault();
-  });
-  pad.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== stickId) return;
-    move(e);
-    e.preventDefault();
-  });
   const end = (e) => { if (e.pointerId === stickId) resetStick(); };
-  pad.addEventListener('pointerup', end);
-  pad.addEventListener('pointercancel', end);
-  pad.addEventListener('lostpointercapture', end);
+  zone.addEventListener('pointerup', end);
+  zone.addEventListener('pointercancel', end);
+  zone.addEventListener('lostpointercapture', end);
+}
+
+// 右半分は視線。移動と別の面に分けておかないと、歩きながら振り向けない
+{
+  const zone = $('#tlook');
+  let lookId = null, lx = 0, ly = 0;
+  zone.addEventListener('pointerdown', (e) => {
+    if (lookId !== null) return;
+    lookId = e.pointerId;
+    lx = e.clientX; ly = e.clientY;
+    try { zone.setPointerCapture(e.pointerId); } catch { /* 捕捉できなくても操作は続く */ }
+    e.preventDefault();
+  });
+  zone.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== lookId || !state.explorer) return;
+    const k = PREF.lookSpeed;
+    state.explorer.look((e.clientX - lx) * k, (e.clientY - ly) * k);
+    lx = e.clientX; ly = e.clientY;
+    draw();
+    e.preventDefault();
+  });
+  const end = (e) => { if (e.pointerId === lookId) lookId = null; };
+  zone.addEventListener('pointerup', end);
+  zone.addEventListener('pointercancel', end);
+  zone.addEventListener('lostpointercapture', end);
 }
 
 {
@@ -7291,6 +7362,16 @@ $('#sprite-reset').addEventListener('click', () => {
 
 loadSavedSprites();
 buildSpriteSlots();
+
+// 指の端末にだけ関わる設定を出す（マウスでは意味がない）
+if (IS_TOUCH) document.body.classList.add('touch');
+{
+  const sl = $('#look-speed');
+  if (sl) {
+    sl.value = String(Math.round(PREF.lookSpeed * 100));
+    sl.addEventListener('input', () => { PREF.lookSpeed = Number(sl.value) / 100; });
+  }
+}
 })();
 
 </script>
