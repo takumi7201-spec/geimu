@@ -2,4 +2,6 @@ node_modules/
 out/
 *.png
 !docs/**/*.png
+# アプリアイコンは配布物（npm run icons で作り直せる）
+!icons/*.png
 .DS_Store

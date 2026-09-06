@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>中生代ワールドマップ — Mesozoic Atlas</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0f1a'/%3E%3Cpath d='M4 21c4-7 9-9 13-6s7 1 11-3v12H4z' fill='%235c8c58'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#0b0f1a">
+<meta name="description" content="中生代の広大なワールドを手続き的に生成し、地図・地球儀・地表ボクセルで見るアプリ">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -20,6 +27,7 @@
       <div class="viewswitch" id="viewswitch">
         <button data-view="2d" class="on">2D 地図</button>
         <button data-view="3d">3D 地球儀</button>
+        <button data-view="pixel">ピクセル地表</button>
       </div>
     </section>
 
@@ -50,6 +58,30 @@
       <button id="generate" class="primary">世界を生成</button>
     </section>
 
+    <section class="panel hidden" id="vox-panel">
+      <h2>地表の区画</h2>
+      <div id="vox-place" class="voxplace"></div>
+      <div class="row">
+        <button id="vox-reroll" class="mini wide">別の場所へ降りる</button>
+      </div>
+      <div class="row">
+        <button id="vox-explore" class="mini wide">探索モードに入る（E）</button>
+      </div>
+      <label class="field">
+        <span>区画の広さ</span>
+        <select id="vox-size"></select>
+      </label>
+      <label class="field">
+        <span>ドットの粗さ</span>
+        <select id="vox-pixel">
+          <option value="1">細かい（等倍）</option>
+          <option value="2">やや粗い（1/2）</option>
+          <option value="3" selected>粗い（1/3）</option>
+          <option value="4">最も粗い（1/4）</option>
+        </select>
+      </label>
+    </section>
+
     <section class="panel">
       <h2>表示</h2>
       <div class="modes" id="modes"></div>
@@ -68,8 +100,10 @@
 
     <footer class="hint">
       ドラッグで移動・回転 / ホイールでズーム / クリックで地点を調査<br>
-      キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 紀切替 ・ <kbd>G</kbd> 2D/3D ・ <kbd>R</kbd> 再生成<br>
-      <kbd>L</kbd> ラベル ・ <kbd>F</kbd> 全体表示 ・ <kbd>Space</kbd> 自転
+      キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 紀切替 ・ <kbd>G</kbd> 表示切替 ・ <kbd>R</kbd> 再生成<br>
+      <kbd>L</kbd> ラベル ・ <kbd>F</kbd> 全体表示 ・ <kbd>Space</kbd> 自転<br>
+      地表では <kbd>E</kbd> で探索モード（<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動・
+      <kbd>Space</kbd> 跳ぶ・<kbd>Shift</kbd> 走る・<kbd>V</kbd> 飛行）、<kbd>N</kbd> で別の場所へ
     </footer>
   </aside>
 
@@ -77,8 +111,11 @@
     <canvas id="map"></canvas>
     <canvas id="globe" class="hidden"></canvas>
     <canvas id="globe-overlay" class="hidden"></canvas>
+    <canvas id="vox" class="hidden"></canvas>
+    <canvas id="vox-overlay" class="hidden"></canvas>
     <div id="minimap-wrap"><canvas id="minimap" width="240" height="120"></canvas></div>
     <div id="inspector" class="hidden"></div>
+    <div id="vox-hud" class="hidden"></div>
     <div id="progress" class="hidden"><div class="bar"><i></i></div><span></span></div>
     <div id="coords"></div>
   </main>
