@@ -340,6 +340,27 @@ console.log('\n[動物の動き]');
     else fail(`${meat.name} が間合いでも噛みつかない`);
   }
 
+  // 目で追う：視線が相手のほうへ寄っていくこと
+  {
+    const spawn2 = findSpawn(scene);
+    const ex = new Explorer(scene, spawn2, { yaw: 0, pitch: 0 });
+    const t = { x: spawn2.x + 20, y: spawn2.y + 3, z: spawn2.z - 14 };
+    const want = Math.atan2(-(t.x - spawn2.x), -(t.z - spawn2.z));
+    for (let i = 0; i < 90; i++) ex.aimAt(t.x, t.y, t.z, 1 / 30);
+    const off = Math.abs(Math.atan2(Math.sin(ex.yaw - want), Math.cos(ex.yaw - want)));
+    if (off < 0.05) pass(`目で追うと視線が相手を向く（ずれ ${(off * 180 / Math.PI).toFixed(1)} 度）`);
+    else fail(`目で追っても視線が合わない（ずれ ${(off * 180 / Math.PI).toFixed(1)} 度）`);
+    // 見上げる相手には上を向くこと
+    if (ex.pitch > 0) pass('高い所に居る相手には見上げる');
+    else fail(`高い所の相手を見下ろしている（pitch ${ex.pitch.toFixed(2)}）`);
+    // ひと息で振り向かない（1 フレームで向きが飛ぶと何が起きたか分からない）
+    const ex2 = new Explorer(scene, spawn2, { yaw: 0, pitch: 0 });
+    ex2.aimAt(t.x, t.y, t.z, 1 / 30);
+    const step1 = Math.abs(Math.atan2(Math.sin(ex2.yaw - 0), Math.cos(ex2.yaw - 0)));
+    if (step1 < Math.abs(want) * 0.5) pass('振り向きは 1 フレームで飛ばず、寄せていく');
+    else fail('1 フレームで振り向いてしまう');
+  }
+
   // 歩みの位相が速さについてくる（描画側はこれで足の運びを作る）
   const walker = scene.fauna.find((f) => !f.flying && !f.swimming);
   if (walker) {

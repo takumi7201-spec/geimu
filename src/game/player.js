@@ -7,7 +7,7 @@
  */
 
 import { createBody, stepBody, eyeOf, PHYS } from './physics.js';
-import { clamp } from '../core/rng.js';
+import { clamp, angleDelta } from '../core/rng.js';
 
 /** 既定のキー割り当て（KeyboardEvent.code） */
 export const DEFAULT_KEYS = {
@@ -61,6 +61,24 @@ export class Explorer {
     // 真上・真下は詰まるので少し手前で止める
     const s = this.invertY ? 1 : -1;
     this.pitch = clamp(this.pitch + s * dy * this.sensitivity, -1.45, 1.45);
+  }
+
+  /**
+   * 対象へ視線を寄せる。ひと息で振り向くと何が起きたか分からないので、
+   * dt で補間する（指数の寄せ方なので、フレームレートが変わっても速さは同じ）。
+   */
+  aimAt(x, y, z, dt) {
+    if (!this.body) return;
+    const e = eyeOf(this.body);
+    const dx = x - e[0], dy = y - e[1], dz = z - e[2];
+    const flat = Math.hypot(dx, dz);
+    if (flat < 1e-4 && Math.abs(dy) < 1e-4) return;
+    // yaw は前進が (-sin, -cos) の系（physics.js と揃える）
+    const wantYaw = Math.atan2(-dx, -dz);
+    const wantPitch = clamp(Math.atan2(dy, Math.max(flat, 1e-4)), -1.45, 1.45);
+    const k = 1 - Math.exp(-dt * 7);
+    this.yaw += angleDelta(this.yaw, wantYaw) * k;
+    this.pitch += (wantPitch - this.pitch) * k;
   }
 
   toggleFly() {

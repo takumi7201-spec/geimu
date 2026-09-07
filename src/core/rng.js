@@ -124,6 +124,18 @@ export function smoothstep(e0, e1, x) {
   return t * t * (3 - 2 * t);
 }
 /** 経度方向のラップを考慮した差分（-0.5..0.5） */
+/**
+ * 角度差を -π..π に畳む（wrapDelta は経度 0..1 の周期用なので使えない）。
+ * 畳まないと、真後ろを向くときに遠回りして一周する。
+ */
+export function angleDelta(from, to) {
+  const TAU = Math.PI * 2;
+  let d = (to - from) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
 export function wrapDelta(a, b) {
   let d = a - b;
   if (d > 0.5) d -= 1;

@@ -10,7 +10,7 @@
  * DOM も WebGL も触らない。Node からも回せる。
  */
 
-import { clamp } from '../core/rng.js';
+import { clamp, angleDelta } from '../core/rng.js';
 import { columnTop, waterTop, obstacleTop } from './physics.js';
 import { WATER_NONE } from '../voxel/scene.js';
 
@@ -27,22 +27,13 @@ export const FAUNA_PHYS = {
   stepUp: 1.2,      // 登れる段差。これを超える壁は迂回する
 };
 
-const TAU = Math.PI * 2;
-/** 角度差を -π..π に畳む。畳まないと、真後ろを向くときに遠回りする */
-function angleDelta(a, b) {
-  let d = (b - a) % TAU;
-  if (d > Math.PI) d -= TAU;
-  if (d < -Math.PI) d += TAU;
-  return d;
-}
-
 /** 群れを動かせる形に整える。scene を作り直したときに一度だけ呼ぶ */
 export function initFauna(scene) {
   if (!scene || !scene.fauna) return;
   for (const f of scene.fauna) {
     f.state = 'idle';
     f.speed = 0;
-    f.timer = 0.6 + (f.phase / TAU) * 3.2;   // 群れが一斉に動き出さないようずらす
+    f.timer = 0.6 + (f.phase / (Math.PI * 2)) * 3.2;   // 群れが一斉に動き出さないようずらす
     f.goal = null;
     f.lunge = 0;
     if (!f.home) f.home = { x: f.x, z: f.z };

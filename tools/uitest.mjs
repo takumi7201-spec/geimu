@@ -192,6 +192,23 @@ async function testPhone(url) {
     if (!lap) ok('状態表示と操作盤が重ならない');
     else ng('状態表示が操作盤に重なる');
 
+    // 生き物を目で追えること（相手が居る区画でだけ検める）
+    await b.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }))`);
+    await b.sleep(900);
+    const watching = await b.evaluate(`document.getElementById('vox-hud').textContent.includes('目で追っています')`);
+    const btnOn = await b.evaluate(`!!document.querySelector('#tbtns button[data-act="watch"]')?.classList.contains('on')`);
+    if (watching && btnOn) ok('F で近くの生き物を目で追い始める');
+    else if (!(await b.evaluate(`!!document.getElementById('vox-hud').textContent.match(/近くに|目で追/)`))) ok('近くに生き物が居ないので、追跡は検証しない');
+    else ng(`目で追えない（HUD ${watching} / ボタン ${btnOn}）`);
+
+    // なぞったら追うのをやめること（見たい方を見られないと窮屈）
+    await b.touch('touchStart', [{ x: 300, y: 300, id: 5 }]);
+    for (let i = 1; i <= 5; i++) { await b.touch('touchMove', [{ x: 300 + i * 12, y: 300, id: 5 }]); await b.sleep(50); }
+    await b.touch('touchEnd', [{ x: 360, y: 300, id: 5 }]);
+    await b.sleep(400);
+    if (!(await b.evaluate(`document.getElementById('vox-hud').textContent.includes('目で追っています')`))) ok('自分で見回すと追うのをやめる');
+    else ng('見回しても追うのをやめない');
+
     // 動物が動いても描画が回り続けること（板を毎フレーム書き換えている）
     const t0 = await b.evaluate(`document.getElementById('vox-hud').textContent`);
     await b.sleep(4000);

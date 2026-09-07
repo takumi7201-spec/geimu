@@ -653,6 +653,47 @@ export class VoxelRenderer {
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, F);
   }
 
+  /**
+   * 俯瞰のカメラを対象へ寄せる。区画全体を見る縮尺のままだと 6m の獣脚類は
+   * 数画素なので、注視点だけでなく距離も詰める。
+   */
+  followTarget(x, y, z, dt, near = 20) {
+    if (!this.ok || this.firstPerson) return;
+    const k = 1 - Math.exp(-dt * 3.5);
+    this.cam.x += (x - this.cam.x) * k;
+    // 相手と同じ高さに置くと、森のなかでは幹と樹冠の中に潜り込んで緑一色になる。
+    // 樹冠より上から見下ろす。ただし真上に立つと板が線になるので 30 度ほどに留める
+    this.cam.y += (y + 5 - this.cam.y) * k;
+    this.cam.z += (z - this.cam.z) * k;
+    this.cam.dist += (near - this.cam.dist) * k;
+    this.cam.pitch += (-0.58 - this.cam.pitch) * k;
+    // 森のなかでは、寄っただけでは幹と樹冠に隠れる。塞がれていたらその手前まで詰める
+    const clear = this._clearDist(this.cam.dist);
+    if (clear < this.cam.dist) this.cam.dist = Math.max(4, clear);
+  }
+
+  /**
+   * 注視点からカメラの向きへ、地形にぶつからずに下がれる距離。
+   * 三人称のカメラが壁にめり込むのを防ぐのと同じ理屈で、
+   * 手前に何かあるならそこまでしか下がらない。
+   */
+  _clearDist(want) {
+    const s = this.scene;
+    if (!s) return want;
+    const { yaw, pitch, x, y, z } = this.cam;
+    const cp = Math.cos(pitch);
+    const dx = Math.sin(yaw) * cp, dy = -Math.sin(pitch), dz = Math.cos(yaw) * cp;
+    const T = s.total;
+    for (let t = 1.5; t < want; t += 0.6) {
+      const px = x + dx * t, py = y + dy * t, pz = z + dz * t;
+      if (px < 0 || pz < 0 || px >= T || pz >= T) return t;
+      const i = (pz | 0) * T + (px | 0);
+      const solid = Math.max(s.height[i], s.blockers ? s.blockers[i] : 0);
+      if (py <= solid) return t;
+    }
+    return want;
+  }
+
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
   refreshSprites() {
     if (!this.ok || !this.scene) return;

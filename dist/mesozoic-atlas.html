@@ -455,7 +455,7 @@ body.touch .touch-only { display: revert; }
       キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 紀切替 ・ <kbd>G</kbd> 表示切替 ・ <kbd>R</kbd> 再生成<br>
       <kbd>L</kbd> ラベル ・ <kbd>F</kbd> 全体表示 ・ <kbd>Space</kbd> 自転<br>
       地表では <kbd>E</kbd> で探索モード（<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動・
-      <kbd>Space</kbd> 跳ぶ・<kbd>Shift</kbd> 走る・<kbd>V</kbd> 飛行）、<kbd>N</kbd> で別の場所へ
+      <kbd>Space</kbd> 跳ぶ・<kbd>Shift</kbd> 走る・<kbd>V</kbd> 飛行・<kbd>F</kbd> 生き物を追う）、<br><kbd>N</kbd> で別の場所へ
     </footer>
   </aside>
 
@@ -476,6 +476,7 @@ body.touch .touch-only { display: revert; }
         <button data-act="jump">跳</button>
         <button data-act="run">走</button>
         <button data-act="fly">飛</button>
+        <button data-act="watch">見</button>
         <button data-act="exit">出</button>
       </div>
     </div>
@@ -702,7 +703,7 @@ return { ERAS, getEra };
 })();
 
 // ===== src/core/rng.js =====
-const { xmur3, mulberry32, rngFromSeed, Noise, lerp, clamp, smoothstep, wrapDelta } = await (async () => {
+const { xmur3, mulberry32, rngFromSeed, Noise, lerp, clamp, smoothstep, angleDelta, wrapDelta } = await (async () => {
 /**
  * 決定論的乱数とノイズ。
  * 同じシードからは常に同じ世界が生まれる（生成の再現性を保証する）。
@@ -829,13 +830,25 @@ function smoothstep(e0, e1, x) {
   return t * t * (3 - 2 * t);
 }
 /** 経度方向のラップを考慮した差分（-0.5..0.5） */
+/**
+ * 角度差を -π..π に畳む（wrapDelta は経度 0..1 の周期用なので使えない）。
+ * 畳まないと、真後ろを向くときに遠回りして一周する。
+ */
+function angleDelta(from, to) {
+  const TAU = Math.PI * 2;
+  let d = (to - from) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
 function wrapDelta(a, b) {
   let d = a - b;
   if (d > 0.5) d -= 1;
   if (d < -0.5) d += 1;
   return d;
 }
-return { xmur3, mulberry32, rngFromSeed, Noise, lerp, clamp, smoothstep, wrapDelta };
+return { xmur3, mulberry32, rngFromSeed, Noise, lerp, clamp, smoothstep, angleDelta, wrapDelta };
 })();
 
 // ===== src/world/timeline.js =====
@@ -5147,6 +5160,47 @@ class VoxelRenderer {
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, F);
   }
 
+  /**
+   * 俯瞰のカメラを対象へ寄せる。区画全体を見る縮尺のままだと 6m の獣脚類は
+   * 数画素なので、注視点だけでなく距離も詰める。
+   */
+  followTarget(x, y, z, dt, near = 20) {
+    if (!this.ok || this.firstPerson) return;
+    const k = 1 - Math.exp(-dt * 3.5);
+    this.cam.x += (x - this.cam.x) * k;
+    // 相手と同じ高さに置くと、森のなかでは幹と樹冠の中に潜り込んで緑一色になる。
+    // 樹冠より上から見下ろす。ただし真上に立つと板が線になるので 30 度ほどに留める
+    this.cam.y += (y + 5 - this.cam.y) * k;
+    this.cam.z += (z - this.cam.z) * k;
+    this.cam.dist += (near - this.cam.dist) * k;
+    this.cam.pitch += (-0.58 - this.cam.pitch) * k;
+    // 森のなかでは、寄っただけでは幹と樹冠に隠れる。塞がれていたらその手前まで詰める
+    const clear = this._clearDist(this.cam.dist);
+    if (clear < this.cam.dist) this.cam.dist = Math.max(4, clear);
+  }
+
+  /**
+   * 注視点からカメラの向きへ、地形にぶつからずに下がれる距離。
+   * 三人称のカメラが壁にめり込むのを防ぐのと同じ理屈で、
+   * 手前に何かあるならそこまでしか下がらない。
+   */
+  _clearDist(want) {
+    const s = this.scene;
+    if (!s) return want;
+    const { yaw, pitch, x, y, z } = this.cam;
+    const cp = Math.cos(pitch);
+    const dx = Math.sin(yaw) * cp, dy = -Math.sin(pitch), dz = Math.cos(yaw) * cp;
+    const T = s.total;
+    for (let t = 1.5; t < want; t += 0.6) {
+      const px = x + dx * t, py = y + dy * t, pz = z + dz * t;
+      if (px < 0 || pz < 0 || px >= T || pz >= T) return t;
+      const i = (pz | 0) * T + (px | 0);
+      const solid = Math.max(s.height[i], s.blockers ? s.blockers[i] : 0);
+      if (py <= solid) return t;
+    }
+    return want;
+  }
+
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
   refreshSprites() {
     if (!this.ok || !this.scene) return;
@@ -5758,6 +5812,24 @@ class Explorer {
     this.pitch = clamp(this.pitch + s * dy * this.sensitivity, -1.45, 1.45);
   }
 
+  /**
+   * 対象へ視線を寄せる。ひと息で振り向くと何が起きたか分からないので、
+   * dt で補間する（指数の寄せ方なので、フレームレートが変わっても速さは同じ）。
+   */
+  aimAt(x, y, z, dt) {
+    if (!this.body) return;
+    const e = eyeOf(this.body);
+    const dx = x - e[0], dy = y - e[1], dz = z - e[2];
+    const flat = Math.hypot(dx, dz);
+    if (flat < 1e-4 && Math.abs(dy) < 1e-4) return;
+    // yaw は前進が (-sin, -cos) の系（physics.js と揃える）
+    const wantYaw = Math.atan2(-dx, -dz);
+    const wantPitch = clamp(Math.atan2(dy, Math.max(flat, 1e-4)), -1.45, 1.45);
+    const k = 1 - Math.exp(-dt * 7);
+    this.yaw += angleDelta(this.yaw, wantYaw) * k;
+    this.pitch += (wantPitch - this.pitch) * k;
+  }
+
   toggleFly() {
     if (!this.body) return;
     this.body.fly = !this.body.fly;
@@ -5804,7 +5876,7 @@ return { DEFAULT_KEYS, Explorer };
 })();
 
 // ===== src/game/api.js =====
-const { SCENE_FORMAT, createGameWorld, enterScene, findSpawn, sampleColumn, faunaNear, describeScene, toBase64, serializeScene, WORLD_SIZES } = await (async () => {
+const { SCENE_FORMAT, createGameWorld, enterScene, findSpawn, sampleColumn, faunaNear, nearestFauna, describeScene, toBase64, serializeScene, WORLD_SIZES } = await (async () => {
 /**
  * ゲームから使うための入口。
  *
@@ -5975,6 +6047,20 @@ function faunaNear(scene, x, z, r = 40) {
     .sort((a, b) => a.dist - b.dist);
 }
 
+/**
+ * いちばん近い個体そのものを返す。faunaNear は写しを返すので、
+ * それを掴んで追いかけると位置が古いまま止まって見える。
+ */
+function nearestFauna(scene, x, z, maxDist = Infinity) {
+  let best = null, bd = maxDist;
+  if (!scene || !scene.fauna) return null;
+  for (const f of scene.fauna) {
+    const d = Math.hypot(f.x - x, f.z - z);
+    if (d < bd) { bd = d; best = f; }
+  }
+  return best;
+}
+
 /** 区画のあらまし（HUD やセーブのメタ情報に） */
 function describeScene(scene) {
   return {
@@ -6045,7 +6131,7 @@ function serializeScene(scene, opts = {}) {
   if (opts.withArrays === false) delete out.arrays;
   return out;
 }
-return { SCENE_FORMAT, createGameWorld, enterScene, findSpawn, sampleColumn, faunaNear, describeScene, toBase64, serializeScene, WORLD_SIZES };
+return { SCENE_FORMAT, createGameWorld, enterScene, findSpawn, sampleColumn, faunaNear, nearestFauna, describeScene, toBase64, serializeScene, WORLD_SIZES };
 })();
 
 // ===== src/game/fauna.js =====
@@ -6078,22 +6164,13 @@ const FAUNA_PHYS = {
   stepUp: 1.2,      // 登れる段差。これを超える壁は迂回する
 };
 
-const TAU = Math.PI * 2;
-/** 角度差を -π..π に畳む。畳まないと、真後ろを向くときに遠回りする */
-function angleDelta(a, b) {
-  let d = (b - a) % TAU;
-  if (d > Math.PI) d -= TAU;
-  if (d < -Math.PI) d += TAU;
-  return d;
-}
-
 /** 群れを動かせる形に整える。scene を作り直したときに一度だけ呼ぶ */
 function initFauna(scene) {
   if (!scene || !scene.fauna) return;
   for (const f of scene.fauna) {
     f.state = 'idle';
     f.speed = 0;
-    f.timer = 0.6 + (f.phase / TAU) * 3.2;   // 群れが一斉に動き出さないようずらす
+    f.timer = 0.6 + (f.phase / (Math.PI * 2)) * 3.2;   // 群れが一斉に動き出さないようずらす
     f.goal = null;
     f.lunge = 0;
     if (!f.home) f.home = { x: f.x, z: f.z };
@@ -6284,6 +6361,7 @@ const state = {
   voxDirty: true,
   explore: false,     // 一人称の探索モード
   explorer: null,
+  watch: null,        // 目で追っている個体（scene.fauna の実体を掴む）
 };
 
 /** 現在の年代が属する紀（キーフレームちょうどでなくても近いほうを返す） */
@@ -6450,6 +6528,7 @@ async function descend(spot = null, variant = '') {
     await new Promise((r) => requestAnimationFrame(() => r()));
     state.voxScene = scene;
     initFauna(scene);      // 群れを動かせる形に整える
+    setWatch(null);        // 前の区画の個体を掴んだままにしない
     state.voxSpot = target;
     state.voxDirty = false;
     vox.setScene(scene);
@@ -6476,6 +6555,24 @@ async function descend(spot = null, variant = '') {
  * 操作は `game/player.js`（DOM 非依存）に閉じてあるので、
  * ゲームに持っていくときはこのアプリ側の配線だけを書き換えればよい。
  */
+// ---------- 生き物を目で追う ----------------------------------------------
+// 6m の獣脚類は、区画を一望する縮尺だと数画素にしかならない。
+// 一人称では視線を、俯瞰ではカメラごと寄せて、姿が見える大きさにする。
+
+function setWatch(f) {
+  state.watch = f || null;
+  document.querySelector('#tbtns button[data-act="watch"]')?.classList.toggle('on', !!state.watch);
+  updateVoxHud();
+  draw();
+}
+
+function toggleWatch() {
+  if (state.view !== 'pixel' || !vox || !vox.ok || !state.voxScene) return;
+  if (state.watch) { setWatch(null); return; }
+  const from = state.explorer ? state.explorer.status() : vox.cam;
+  setWatch(nearestFauna(state.voxScene, from.x, from.z, 260));
+}
+
 function setExplore(on) {
   if (!vox || !vox.ok || !state.voxScene) return;
   state.explore = on;
@@ -6527,7 +6624,9 @@ function updateVoxHud() {
   hud.innerHTML =
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
     `${mode}　${(st.speed * VOX_M).toFixed(0)} m/s　目線 ${Math.round(st.eyeM).toLocaleString()}m\n` +
-    (near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）\n` : '') +
+    (state.watch
+      ? `<b>${state.watch.name}</b> を目で追っています（${Math.round(Math.hypot(state.watch.x - st.x, state.watch.z - st.z) * VOX_M)}m）\n`
+      : near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）\n` : '') +
     // 指の端末には操作盤が出ているので、キーの案内は場所の無駄にしかならない
     (IS_TOUCH ? '' : `<i>WASD 移動 / Space 跳ぶ / Shift 走る / V 飛行 / E 抜ける</i>`);
 }
@@ -6841,7 +6940,15 @@ function voxLoop(t) {
   // 動物は俯瞰でも動き続ける。見ている間だけなので、止まっていても困らない
   const who = state.explorer && state.explorer.status();
   stepFauna(state.voxScene, dt, who ? { x: who.x, z: who.z } : null);
+  // 追っている相手が遠ざかりすぎたら、そっと解く
+  if (state.watch) {
+    const from = state.explorer ? state.explorer.status() : vox.cam;
+    if (!state.voxScene.fauna.includes(state.watch)
+      || Math.hypot(state.watch.x - from.x, state.watch.z - from.z) > 300) setWatch(null);
+  }
   if (state.explore && state.explorer) {
+    // 視線を寄せてから歩かせる。逆にすると、返ってきた向きが 1 フレーム古くなる
+    if (state.watch) state.explorer.aimAt(state.watch.x + 0.5, state.watch.y + 1, state.watch.z + 0.5, dt);
     // 探索中は間引かない（間引くと視点がかくつき、当たり判定も粗くなる）
     const v = state.explorer.update(dt);
     if (v) vox.setEye(v.eye[0], v.eye[1], v.eye[2], v.yaw, v.pitch);
@@ -6851,6 +6958,7 @@ function voxLoop(t) {
     return;
   }
   if (t - voxLast < 32) return;
+  if (state.watch) vox.followTarget(state.watch.x + 0.5, state.watch.y, state.watch.z + 0.5, (t - voxLast) / 1000);
   vox.render(t - voxLast);
   voxLast = t;
 }
@@ -6983,6 +7091,7 @@ voxCanvas.addEventListener('pointermove', (e) => {
     vdrag.moved += Math.abs(dx) + Math.abs(dy);
     vdrag.x = e.clientX; vdrag.y = e.clientY;
     // 探索中はポインタロックが取れない環境のための「ドラッグで首を振る」
+    if (state.watch) setWatch(null);        // 自分で見回したら追うのをやめる
     if (state.explore && state.explorer) state.explorer.look(dx * 2.2, dy * 2.2);
     else vox.rotate(dx, dy);
     draw();
@@ -7064,6 +7173,7 @@ window.addEventListener('keydown', (e) => {
     }
     case 'n': if (state.view === 'pixel') descend(null, String(Math.random()).slice(2, 7)); break;
     case 'e': if (state.view === 'pixel') setExplore(!state.explore); break;
+    case 'f': if (state.view === 'pixel') toggleWatch(); break;
     case 'w': case 'a': case 's': case 'd':
       // 俯瞰のときは注視点を平行移動する（探索中は上で処理済み）
       if (state.view !== 'pixel' || !vox || !vox.ok) return;
@@ -7420,6 +7530,7 @@ function stickSet(next) {
   });
   zone.addEventListener('pointermove', (e) => {
     if (e.pointerId !== lookId || !state.explorer) return;
+    if (state.watch) setWatch(null);
     const k = PREF.lookSpeed;
     state.explorer.look((e.clientX - lx) * k, (e.clientY - ly) * k);
     lx = e.clientX; ly = e.clientY;
@@ -7438,6 +7549,10 @@ function stickSet(next) {
     const act = b.dataset.act;
     if (act === 'exit') {
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); setExplore(false); });
+      continue;
+    }
+    if (act === 'watch') {
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); toggleWatch(); });
       continue;
     }
     if (act === 'fly') {

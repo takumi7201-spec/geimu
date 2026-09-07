@@ -170,6 +170,20 @@ export function faunaNear(scene, x, z, r = 40) {
     .sort((a, b) => a.dist - b.dist);
 }
 
+/**
+ * いちばん近い個体そのものを返す。faunaNear は写しを返すので、
+ * それを掴んで追いかけると位置が古いまま止まって見える。
+ */
+export function nearestFauna(scene, x, z, maxDist = Infinity) {
+  let best = null, bd = maxDist;
+  if (!scene || !scene.fauna) return null;
+  for (const f of scene.fauna) {
+    const d = Math.hypot(f.x - x, f.z - z);
+    if (d < bd) { bd = d; best = f; }
+  }
+  return best;
+}
+
 /** 区画のあらまし（HUD やセーブのメタ情報に） */
 export function describeScene(scene) {
   return {
