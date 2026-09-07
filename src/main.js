@@ -181,6 +181,8 @@ function initGlobe() {
 function initVox() {
   vox = new VoxelRenderer(voxCanvas, voxOverlay);
   applyLookPref();
+  // 影は深度パスをもう一枚焼く。指の端末では切っておき、要る人が入れる
+  if (IS_TOUCH) vox.setLayer('shadow', false);
   if (!vox.ok) {
     const box = document.createElement('div');
     box.id = 'gl-error';
@@ -384,7 +386,7 @@ const LAYER_LABELS = {
   marks: '名所', grid: '経緯線', borders: '海岸線',
 };
 const LAYER_3D = { ocean: '海面', atmosphere: '大気' };
-const LAYER_VOX = { water: '水面', plants: '植生', fauna: '動物', labels: '名前', fog: '霞' };
+const LAYER_VOX = { water: '水面', plants: '植生', fauna: '動物', shadow: '影', labels: '名前', fog: '霞' };
 
 /** 視点の反転。レイヤではないが、操作を変えたい人が最初に探すのはここ */
 function addLookToggle(box) {

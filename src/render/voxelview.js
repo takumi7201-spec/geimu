@@ -30,16 +30,75 @@ function spriteKey(key) {
   return alt && sprite(alt) ? alt : null;
 }
 
+// 影を焼くパス。色は要らないので位置だけ通す
+const DEPTH_VS = `
+attribute vec3 aPos;
+uniform mat4 uMVP;
+void main() { gl_Position = uMVP * vec4(aPos, 1.0); }`;
+
+const DEPTH_FS = `
+precision mediump float;
+void main() {}`;
+
+// 板の影。カメラ向きのまま焼くと、見る角度で地面の影の形が変わってしまうので、
+// 焼くときだけは日の方を向かせる（絵のシルエットがそのまま影になる）
+const DEPTH_SPRITE_VS = `
+attribute vec3 aCenter;
+attribute vec2 aCorner;
+attribute vec2 aUV;
+uniform mat4 uMVP;
+uniform vec3 uSun;
+varying vec2 vUV;
+void main() {
+  vec2 to = uSun.xz;
+  float len = length(to);
+  vec2 right = len > 0.001 ? vec2(-to.y, to.x) / len : vec2(1.0, 0.0);
+  vec3 p = vec3(aCenter.x + right.x * aCorner.x, aCenter.y + aCorner.y, aCenter.z + right.y * aCorner.x);
+  vUV = aUV;
+  gl_Position = uMVP * vec4(p, 1.0);
+}`;
+
+const DEPTH_SPRITE_FS = `
+precision mediump float;
+uniform sampler2D uTex;
+varying vec2 vUV;
+void main() { if (texture2D(uTex, vUV).a < 0.5) discard; }`;
+
+// 影を受ける側で共有する断片。日なたなら 1、影なら 0 を返す
+const SHADOW_FN = `
+uniform sampler2D uShadowMap;
+uniform vec2 uShadowTexel;
+uniform float uShadowOn;
+varying vec4 vShadow;
+float sunlight() {
+  if (uShadowOn < 0.5) return 1.0;
+  vec3 p = vShadow.xyz / vShadow.w * 0.5 + 0.5;
+  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
+  // 焼いた範囲の縁では影を薄めていく。切り落とすと、そこに見えない壁が立つ
+  float edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
+  float fade = smoothstep(0.0, 0.07, edge);
+  if (fade <= 0.0) return 1.0;
+  // 一点だけ引く。ドットの世界では影の縁が硬いほうが馴染むうえ、
+  // 3x3 の PCF はフラグメントの負荷が 9 倍になり、ここが一番効く
+  float d = texture2D(uShadowMap, p.xy).r;
+  // バイアスを削りすぎると自分の影で縞（アクネ）が出る
+  float lit = p.z - 0.0026 > d ? 0.0 : 1.0;
+  return mix(1.0, lit, fade);
+}`;
+
 const SOLID_VS = `
 attribute vec3 aPos;
 attribute vec4 aColor;
 uniform mat4 uMVP;
+uniform mat4 uLightMVP;
 uniform vec3 uCam;
 varying vec4 vColor;
 varying float vDist;
+varying vec4 vShadow;
 void main() {
   vColor = aColor;
   vDist = length(aPos - uCam);
+  vShadow = uLightMVP * vec4(aPos, 1.0);
   gl_Position = uMVP * vec4(aPos, 1.0);
 }`;
 
@@ -49,10 +108,13 @@ uniform vec3 uFog;
 uniform vec2 uFogRange;
 varying vec4 vColor;
 varying float vDist;
+` + SHADOW_FN + `
 void main() {
+  // 影は真っ黒にしない。空からの回り込みが残るので、暗くして青に寄せるだけ
+  vec3 c = mix(vColor.rgb * vec3(0.52, 0.57, 0.72), vColor.rgb, sunlight());
   // 霧は完全には塗りつぶさない。奥の山が輪郭を保つほうが広く見える
   float f = smoothstep(uFogRange.x, uFogRange.y, vDist) * 0.82;
-  gl_FragColor = vec4(mix(vColor.rgb, uFog, f), 1.0);
+  gl_FragColor = vec4(mix(c, uFog, f), 1.0);
 }`;
 
 const WATER_VS = `
@@ -90,9 +152,11 @@ attribute vec3 aCenter;
 attribute vec2 aCorner;
 attribute vec2 aUV;
 uniform mat4 uMVP;
+uniform mat4 uLightMVP;
 uniform vec3 uCam;
 varying vec2 vUV;
 varying float vDist;
+varying vec4 vShadow;
 void main() {
   vec2 to = aCenter.xz - uCam.xz;
   float len = length(to);
@@ -101,6 +165,7 @@ void main() {
   vec3 p = vec3(aCenter.x + right.x * aCorner.x, aCenter.y + aCorner.y, aCenter.z + right.y * aCorner.x);
   vUV = aUV;
   vDist = length(p - uCam);
+  vShadow = uLightMVP * vec4(p, 1.0);
   gl_Position = uMVP * vec4(p, 1.0);
 }`;
 
@@ -111,13 +176,15 @@ uniform vec3 uFog;
 uniform vec2 uFogRange;
 varying vec2 vUV;
 varying float vDist;
+` + SHADOW_FN + `
 void main() {
   vec4 c = texture2D(uTex, vUV);
   // ドット絵の抜きは捨てる。半透明で混ぜると板の矩形が深度に残り、
   // 後ろの地形が四角く欠ける
   if (c.a < 0.5) discard;
+  vec3 col = mix(c.rgb * vec3(0.52, 0.57, 0.72), c.rgb, sunlight());
   float f = smoothstep(uFogRange.x, uFogRange.y, vDist) * 0.82;
-  gl_FragColor = vec4(mix(c.rgb, uFog, f), 1.0);
+  gl_FragColor = vec4(mix(col, uFog, f), 1.0);
 }`;
 
 const SKY_VS = `
@@ -235,7 +302,7 @@ export class VoxelRenderer {
     this.scene = null;
     this.ok = false;
     this.error = null;
-    this.layers = { water: true, plants: true, fauna: true, labels: true, fog: true };
+    this.layers = { water: true, plants: true, fauna: true, shadow: true, labels: true, fog: true };
     this.pixelSize = 3;                 // 内部解像度を何分の一にするか（ドットの粗さ）
     // dist > 0 は俯瞰（注視点まわりの周回）、dist = 0 は一人称。
     // 一人称では cam.x/y/z が目の位置そのものになる
@@ -258,11 +325,14 @@ export class VoxelRenderer {
     }
     if (!gl) { this.error = 'WebGL を初期化できませんでした'; return; }
     this.gl = gl;
+    this.gl2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
     try {
       this.progSolid = program(gl, SOLID_VS, SOLID_FS);
       this.progWater = program(gl, WATER_VS, WATER_FS);
       this.progSky = program(gl, SKY_VS, SKY_FS);
       this.progSprite = program(gl, SPRITE_VS, SPRITE_FS);
+      this.progDepth = program(gl, DEPTH_VS, DEPTH_FS);
+      this.progDepthSprite = program(gl, DEPTH_SPRITE_VS, DEPTH_SPRITE_FS);
     } catch (e) { this.error = e.message; return; }
     this.skyBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.skyBuf);
@@ -270,6 +340,7 @@ export class VoxelRenderer {
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
+    this._initShadow();
     this.ok = true;
   }
 
@@ -282,7 +353,7 @@ export class VoxelRenderer {
 
   setLayer(k, v) {
     this.layers[k] = v;
-    if (this.scene && (k === 'plants' || k === 'fauna')) this._build();
+    if (this.scene && (k === 'plants' || k === 'fauna')) this._build();   // 影は焼き直すだけなので組み直さない
   }
 
   resetCamera() {
@@ -321,6 +392,7 @@ export class VoxelRenderer {
     };
     if (this.solid) { gl.deleteBuffer(this.solid.vb); gl.deleteBuffer(this.solid.ib); }
     if (this.water) { gl.deleteBuffer(this.water.vb); gl.deleteBuffer(this.water.ib); }
+    this._shadowMVP = null;   // 地形が変わったので焼き直す
     this.solid = upload(solid);
     this.water = upload(water);
     this.stats = {
@@ -694,6 +766,112 @@ export class VoxelRenderer {
     return want;
   }
 
+  /**
+   * 影を焼くための深度テクスチャ。深度テクスチャが無い環境（古い WebGL1）では
+   * 影を諦める ―― 影が無くても遊べるが、動かないほうが困る。
+   */
+  _initShadow() {
+    const gl = this.gl;
+    this.shadow = null;
+    if (!this.gl2 && !gl.getExtension('WEBGL_depth_texture')) return;
+    const size = 1024;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, this.gl2 ? gl.DEPTH_COMPONENT24 : gl.DEPTH_COMPONENT,
+      size, size, 0, gl.DEPTH_COMPONENT, this.gl2 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, tex, 0);
+    if (this.gl2) { gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE); }
+    const complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (!complete) { gl.deleteFramebuffer(fb); gl.deleteTexture(tex); return; }
+    this.shadow = { fb, tex, size };
+  }
+
+  /**
+   * 太陽から見た行列。区画全体（2.3km）を一枚で覆うと 1 ブロックが数画素になり、
+   * 木の影が溶けて消える。見ているあたりだけを切り取って解像度を稼ぐ。
+   */
+  _lightMVP() {
+    const s = this.scene;
+    const eye = this._eye();
+    const T = s ? s.total : 128;
+    const cx = clamp(eye[0], 0, T - 1), cz = clamp(eye[2], 0, T - 1);
+    const cy = s ? s.height[(cz | 0) * T + (cx | 0)] : 0;
+    const R = this.firstPerson ? 54 : clamp(this.cam.dist * 1.15, 42, 230);
+    const D = 320;
+    const from = [cx + SUN[0] * D, cy + SUN[1] * D, cz + SUN[2] * D];
+    return M.multiply(M.ortho(-R, R, -R, R, 1, D * 2.2), M.lookAt(from, [cx, cy, cz]));
+  }
+
+  /**
+   * 影を焼く。戻り値の行列を本描画に渡す（null なら影なしで描く）。
+   *
+   * 焼き直しは毎フレームやらない。地形も草木も動かないので、変わるのは
+   * 動物の影と、視点が動いたぶんの切り取り範囲だけ。ここは深度パスに
+   * 地形の全ポリゴンを流すいちばん重い処理なので、間引きがそのまま効く。
+   */
+  _renderShadow() {
+    const gl = this.gl;
+    if (!this.shadow || !this.layers.shadow || !this.solid || !this.solid.count) return null;
+    const eye = this._eye();
+    const moved = !this._shadowEye
+      || Math.hypot(eye[0] - this._shadowEye[0], eye[1] - this._shadowEye[1], eye[2] - this._shadowEye[2]) > 3;
+    this._shadowAge = (this._shadowAge || 0) + 1;
+    if (!moved && this._shadowAge < 4 && this._shadowMVP) return this._shadowMVP;
+    this._shadowAge = 0;
+    this._shadowEye = eye;
+    const mvp = this._lightMVP();
+    this._shadowMVP = mvp;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadow.fb);
+    gl.viewport(0, 0, this.shadow.size, this.shadow.size);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    // 板は裏表がある。カリングを効かせたままだと、向きによって影が抜ける
+    gl.disable(gl.CULL_FACE);
+    {
+      const { p, loc } = this.progDepth;
+      gl.useProgram(p);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.solid.vb);
+      gl.enableVertexAttribArray(loc.aPos);
+      gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 16, 0);
+      gl.uniformMatrix4fv(loc.uMVP, false, mvp);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.solid.ib);
+      gl.drawElements(gl.TRIANGLES, this.solid.count, gl.UNSIGNED_INT, 0);
+      gl.disableVertexAttribArray(loc.aPos);
+    }
+    if (this.spriteMesh && this.layers.fauna) {
+      const { p, loc } = this.progDepthSprite;
+      gl.useProgram(p);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteMesh.vb);
+      const S = 28;
+      gl.enableVertexAttribArray(loc.aCenter);
+      gl.vertexAttribPointer(loc.aCenter, 3, gl.FLOAT, false, S, 0);
+      gl.enableVertexAttribArray(loc.aCorner);
+      gl.vertexAttribPointer(loc.aCorner, 2, gl.FLOAT, false, S, 12);
+      gl.enableVertexAttribArray(loc.aUV);
+      gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, S, 20);
+      gl.uniformMatrix4fv(loc.uMVP, false, mvp);
+      gl.uniform3fv(loc.uSun, SUN);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
+      gl.uniform1i(loc.uTex, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, this.spriteMesh.count);
+      gl.disableVertexAttribArray(loc.aCenter);
+      gl.disableVertexAttribArray(loc.aCorner);
+      gl.disableVertexAttribArray(loc.aUV);
+    }
+    gl.enable(gl.CULL_FACE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return mvp;
+  }
+
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
   refreshSprites() {
     if (!this.ok || !this.scene) return;
@@ -817,6 +995,8 @@ export class VoxelRenderer {
     this.time += dt * 0.001;
     // 動物は毎フレーム居場所も姿も変わる。板だけ書き直す（地形は据え置き）
     this._updateSprites();
+    // 影は板の位置が決まってから焼く。順が逆だと動物の影が 1 フレーム遅れる
+    const lightMVP = this._renderShadow();
     const s = this.scene;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.enable(gl.DEPTH_TEST);
@@ -855,6 +1035,19 @@ export class VoxelRenderer {
       gl.depthMask(true);
     }
 
+    // 影を受ける側に渡すもの。影を持たないシェーダでは loc が null になり、
+    // uniform 呼び出しはそのまま素通りする
+    const IDENT = M.identity();
+    const bindShadow = (loc) => {
+      gl.uniformMatrix4fv(loc.uLightMVP, false, lightMVP || IDENT);
+      gl.uniform1f(loc.uShadowOn, lightMVP ? 1 : 0);
+      if (!this.shadow) return;
+      gl.uniform2f(loc.uShadowTexel, 1 / this.shadow.size, 1 / this.shadow.size);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.shadow.tex);
+      gl.uniform1i(loc.uShadowMap, 1);
+    };
+
     const bind = (prog, mesh) => {
       const { p, loc } = prog;
       gl.useProgram(p);
@@ -867,6 +1060,7 @@ export class VoxelRenderer {
       gl.uniform3fv(loc.uCam, eye);
       gl.uniform3fv(loc.uFog, fog);
       gl.uniform2fv(loc.uFogRange, fogRange);
+      bindShadow(loc);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.ib);
       return loc;
     };
@@ -893,6 +1087,7 @@ export class VoxelRenderer {
       gl.uniform3fv(loc.uCam, eye);
       gl.uniform3fv(loc.uFog, fog);
       gl.uniform2fv(loc.uFogRange, fogRange);
+      bindShadow(loc);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
       gl.uniform1i(loc.uTex, 0);

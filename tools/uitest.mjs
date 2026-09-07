@@ -136,16 +136,24 @@ async function testPhone(url) {
 
     const speed = () => b.evaluate(`document.getElementById('vox-hud').textContent.split('\\n')[1]`);
 
-    // 定位置でなく、左下のどこを触っても歩けること
+    // 定位置でなく、左下のどこを触っても歩けること。
+    // 倒す向きは変えて試す ―― 降りた先が崖や幹に面していることがあり、
+    // 前だけで判定すると地形しだいで落ちる
     const spots = [[70, 770], [120, 620], [175, 700]];
+    const dirs = [[0, -50], [50, 0], [0, 50], [-50, 0]];
     let walked = 0;
     for (const [x, y] of spots) {
-      await b.touch('touchStart', [{ x, y, id: 1 }]);
-      await b.touch('touchMove', [{ x, y: y - 50, id: 1 }]);
-      await b.sleep(700);
-      if (num(await speed()) > 1) walked++;
-      await b.touch('touchEnd', [{ x, y: y - 50, id: 1 }]);
-      await b.sleep(400);
+      let moved = false;
+      for (const [dx, dy] of dirs) {
+        await b.touch('touchStart', [{ x, y, id: 1 }]);
+        await b.touch('touchMove', [{ x: x + dx, y: y + dy, id: 1 }]);
+        await b.sleep(600);
+        moved = num(await speed()) > 1;
+        await b.touch('touchEnd', [{ x: x + dx, y: y + dy, id: 1 }]);
+        await b.sleep(300);
+        if (moved) break;
+      }
+      if (moved) walked++;
     }
     if (walked === spots.length) ok(`左下の ${walked} 箇所すべてから歩き出せる`);
     else ng(`左下 ${spots.length} 箇所のうち ${walked} 箇所でしか歩けない`);

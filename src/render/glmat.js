@@ -73,3 +73,40 @@ export function transposeRot(m) {
     0, 0, 0, 1,
   ]);
 }
+
+/**
+ * 正射影。影を焼くときに、太陽から区画を真横に切り取るのに使う。
+ * 並びは perspective と同じ列優先。
+ */
+export function ortho(l, r, b, t, n, f) {
+  const lr = 1 / (l - r), bt = 1 / (b - t), nf = 1 / (n - f);
+  return new Float32Array([
+    -2 * lr, 0, 0, 0,
+    0, -2 * bt, 0, 0,
+    0, 0, 2 * nf, 0,
+    (l + r) * lr, (t + b) * bt, (f + n) * nf, 1,
+  ]);
+}
+
+/** eye から target を見るビュー行列（up は既定で +Y） */
+export function lookAt(eye, target, up = [0, 1, 0]) {
+  let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+  let l = Math.hypot(zx, zy, zz) || 1;
+  zx /= l; zy /= l; zz /= l;
+  // 視線が up と平行だと外積が潰れる。太陽が真上に来たときに起きる
+  let ux = up[0], uy = up[1], uz = up[2];
+  if (Math.abs(ux * zx + uy * zy + uz * zz) > 0.999) { ux = 0; uy = 0; uz = 1; }
+  let xx = uy * zz - uz * zy, xy = uz * zx - ux * zz, xz = ux * zy - uy * zx;
+  l = Math.hypot(xx, xy, xz) || 1;
+  xx /= l; xy /= l; xz /= l;
+  const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  return new Float32Array([
+    xx, yx, zx, 0,
+    xy, yy, zy, 0,
+    xz, yz, zz, 0,
+    -(xx * eye[0] + xy * eye[1] + xz * eye[2]),
+    -(yx * eye[0] + yy * eye[1] + yz * eye[2]),
+    -(zx * eye[0] + zy * eye[1] + zz * eye[2]),
+    1,
+  ]);
+}

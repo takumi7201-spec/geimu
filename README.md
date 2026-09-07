@@ -152,6 +152,14 @@ node tools/export-scene.mjs --seed pangaea --ma 90 --scene large --out out/
 
 座標系・当たり判定の定数・JSON の読み方は [docs/game-api.md](docs/game-api.md) にあります。
 
+## 影
+
+太陽から見た深度を焼いて、地形・草木・動物の影を地面に落とす（`_renderShadow`）。
+見ているあたりだけを切り取って焼くので、木の影が溶けずに残る。
+
+「表示」の *影* で切れる。深度テクスチャが無い環境では自動で無効になり、
+指の端末では既定で切ってある（深度パスをもう一枚焼くため）。
+
 ## 動物のふるまい
 
 動物は置き物ではなく、区画の中を歩き回る（`src/game/fauna.js`）。
