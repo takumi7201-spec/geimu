@@ -254,7 +254,7 @@ function markMode() {
   for (const b of $('#modeswitch').children) b.classList.toggle('on', b.dataset.mode === state.mode);
   document.body.classList.toggle('game-mode', state.mode === 'game');
   $('#mode-note').textContent = state.mode === 'game'
-    ? '陸・海・空・山・森がひとつに収まる区画に降ります。'
+    ? '陸・海・空・山・森がひとつに収まる区画を、上から覗き込みます。E で降りられます。'
     : '世界じゅうを地図・地球儀・地表で見て回れます。';
   const rr = $('#vox-reroll');
   if (rr) rr.textContent = state.mode === 'game' ? '別の箱庭へ' : '別の場所へ降りる';
@@ -266,6 +266,10 @@ function buildModeSwitch() {
 }
 
 async function setMode(m) {
+  if (state.mode === m) return;
+  // 世界を組んでいる最中に押されたら待つ。黙って捨てると、押しても
+  // 何も起きない＝壊れている、と見える
+  for (let i = 0; i < 300 && state.busy; i++) await new Promise((r) => setTimeout(r, 100));
   if (state.mode === m || state.busy) return;
   state.mode = m;
   markMode();
@@ -278,11 +282,14 @@ async function setMode(m) {
   }
 }
 
-/** 遊び場に降りる。条件の揃った区画を選び、そのまま探索に入る */
+/** 遊び場に降りる。条件の揃った区画を選び、まずは全体を覗き込む */
 async function enterSandbox(variant = '') {
   if (!state.world) return;
   await descend(pickSandboxSpot(state.world, variant), `sandbox:${variant}`);
-  if (state.voxScene && !state.explore) setExplore(true);
+  // 一人称は目線が地表にあり、木立に入ると数ブロック先しか見えない。
+  // どんな場所に降りたのかまず掴めるよう、箱庭ぜんたいを見る構えから始める
+  if (state.explore) setExplore(false);
+  if (state.voxScene && vox && vox.ok) { vox.frameSandbox(); draw(); }
 }
 
 // ---------- 生き物を目で追う ----------------------------------------------

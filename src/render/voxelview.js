@@ -876,6 +876,44 @@ export class VoxelRenderer {
     return mvp;
   }
 
+  /**
+   * 箱庭をひとつの模型として覗き込む構え。
+   *
+   * 一人称は目線が地表 18m にあり、木立に入ると数ブロック先しか見えない。
+   * どんな場所に降りたのか掴めないので、まずは全体が入るところまで引く。
+   * 見下ろしを深くしすぎると Y 軸ビルボードの板が線に潰れるので、45 度手前で止める。
+   */
+  frameSandbox() {
+    const s = this.scene;
+    if (!this.ok || !s) return;
+    this.setFirstPerson(false);
+    const c = s.total / 2;
+    // 中心の一点ではなく真ん中あたりの平均をとる。たまたま谷底や崖の上だと
+    // 注視点が上下に飛んで、同じ箱庭でも見え方が変わってしまう
+    let sum = 0, cnt = 0;
+    const r = Math.max(8, s.cols >> 1);
+    for (let z = c - r; z < c + r; z += 4) {
+      for (let x = c - r; x < c + r; x += 4) {
+        const i = (z | 0) * s.total + (x | 0);
+        const wl = s.water[i];
+        sum += Math.max(s.height[i], wl === WATER_NONE ? s.height[i] : wl);
+        cnt++;
+      }
+    }
+    this.cam.x = c;
+    this.cam.z = c;
+    this.cam.y = (cnt ? sum / cnt : 0) + 5;
+    // 区画は total（= cols * 4）ブロック四方ある。画角 52 度で全体を収めるには
+    // その 0.8 ぶんが入る距離が要る。近すぎると森の一角しか見えず、
+    // どんな地形の箱庭なのか分からない
+    this.cam.pitch = -0.78;
+    this.cam.yaw = 0.9;
+    // 全体を隅まで収めると丘の遠景になって、木も生き物も粒になる。
+    // 半分ほどが視野に入るあたりが、地形も足元も見える距離
+    const span = s.total * 0.5;
+    this.cam.dist = span / (2 * Math.tan((52 * Math.PI / 180) / 2));
+  }
+
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
   refreshSprites() {
     if (!this.ok || !this.scene) return;

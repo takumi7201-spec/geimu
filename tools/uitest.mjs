@@ -89,9 +89,17 @@ export async function launch({ phone = null, url, port = 9444, size = [1400, 900
     writeFileSync(path, Buffer.from(s.result.data, 'base64'));
   };
 
+  // 生成が始まる前は progress がまだ hidden のままなので、それだけを見ると
+  // 「もう出来ている」と誤判定して、busy のまま次の操作を送ってしまう。
+  // 統計が埋まったこと（＝世界がある）も併せて見る
   const waitReady = async (limit = 240) => {
     for (let i = 0; i < limit; i++) {
-      if (await evaluate(`document.getElementById('progress')?.className === 'hidden'`)) return true;
+      const done = await evaluate(`(() => {
+        const p = document.getElementById('progress');
+        const s = document.getElementById('stats');
+        return p && p.className === 'hidden' && (s ? s.textContent.length > 10 : true);
+      })()`);
+      if (done) return true;
       await sleep(1000);
     }
     return false;
@@ -139,8 +147,8 @@ async function testPhone(url) {
       reroll: document.getElementById('vox-reroll')?.textContent,
     })`);
     const g = JSON.parse(gm);
-    if (g.on === 'ゲーム' && g.body && g.hud) ok('ゲームに切り替えると箱庭に降りて探索が始まる');
-    else ng(`ゲームに切り替わらない（${gm}）`);
+    if (g.on === 'ゲーム' && g.body && !g.hud) ok('ゲームに切り替えると箱庭を上から覗く構えになる');
+    else ng(`ゲームに切り替わらない、または一人称のまま（${gm}）`);
     if (g.reroll === '別の箱庭へ') ok('降り直しの行き先が箱庭になる');
     else ng(`降り直しが箱庭を指していない（${g.reroll}）`);
 
@@ -150,11 +158,15 @@ async function testPhone(url) {
     if (!(await b.evaluate(`document.body.classList.contains('game-mode')`))) ok('観察へ戻せる');
     else ng('観察へ戻らない');
 
-    // ゲームへ戻して、以降の検証は探索状態で続ける
+    // ゲームへ戻し、覗く構えから降りて、以降は探索状態で検証を続ける
     await b.evaluate(`document.querySelector('#modeswitch button[data-mode="game"]').click()`);
     await b.sleep(2500);
     await b.waitReady();
     await b.sleep(1500);
+    await b.evaluate(`document.getElementById('vox-explore').click()`);
+    await b.sleep(1500);
+    if (await b.evaluate(`!document.getElementById('vox-hud').classList.contains('hidden')`)) ok('覗く構えから降りて探索に入れる');
+    else ng('箱庭から降りられない');
 
     if (await b.evaluate(`document.getElementById('touch').classList.contains('hidden')`)) return ng('操作盤が出ない');
     ok('探索に入ると操作盤が出る');
