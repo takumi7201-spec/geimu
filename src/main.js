@@ -48,6 +48,7 @@ const state = {
   explore: false,     // 一人称の探索モード
   explorer: null,
   watch: null,        // 目で追っている個体（scene.fauna の実体を掴む）
+  watchDone: false,   // ひと巡りして解いた直後か（次は先頭から始める）
   mode: 'observe',    // observe（見て回る）か game（箱庭で遊ぶ）
 };
 
@@ -220,6 +221,7 @@ async function descend(spot = null, variant = '') {
     state.voxScene = scene;
     initFauna(scene);      // 群れを動かせる形に整える
     setWatch(null);        // 前の区画の個体を掴んだままにしない
+    state.watchDone = false;
     state.voxSpot = target;
     state.voxDirty = false;
     vox.setScene(scene);
@@ -298,16 +300,35 @@ async function enterSandbox(variant = '') {
 
 function setWatch(f) {
   state.watch = f || null;
+  if (!state.watch && !state.explore) $('#vox-hud').classList.add('hidden');
   document.querySelector('#tbtns button[data-act="watch"]')?.classList.toggle('on', !!state.watch);
   updateVoxHud();
   draw();
 }
 
-function toggleWatch() {
+/**
+ * 追う相手を次の個体へ移す。押すたびに巡り、ひと巡りしたら解く。
+ * 一体しか追えないと、群れのなかの見たい一頭を選べない。
+ *
+ * 巡る順は scene.fauna の並びに固定する。近い順にすると、追った相手が
+ * いちばん近くなって順位が入れ替わり、二頭のあいだを行き来してしまう。
+ * ただし最初のひとつだけは、いま近くに居るものから始める。
+ */
+function cycleWatch() {
   if (state.view !== 'pixel' || !vox || !vox.ok || !state.voxScene) return;
-  if (state.watch) { setWatch(null); return; }
-  const from = state.explorer ? state.explorer.status() : vox.cam;
-  setWatch(nearestFauna(state.voxScene, from.x, from.z, 260));
+  const list = state.voxScene.fauna;
+  if (!list.length) { setWatch(null); return; }
+  const cur = state.watch ? list.indexOf(state.watch) : -1;
+  if (cur < 0) {
+    // ひと巡りして解いた直後は先頭から。近い順に戻すと、いま寄っている
+    // ＝直前まで追っていた個体が選ばれ、そこから抜けられない
+    if (state.watchDone) { state.watchDone = false; setWatch(list[0]); return; }
+    const from = state.explorer ? state.explorer.status() : vox.cam;
+    setWatch(nearestFauna(state.voxScene, from.x, from.z) || list[0]);
+    return;
+  }
+  if (cur + 1 >= list.length) { state.watchDone = true; setWatch(null); return; }
+  setWatch(list[cur + 1]);
 }
 
 function setExplore(on) {
@@ -351,7 +372,19 @@ function setExplore(on) {
 
 function updateVoxHud() {
   const hud = $('#vox-hud');
-  if (!state.explore || !state.explorer) { hud.textContent = ''; return; }
+  // 覗いているときも、誰を追っているかは出す。俯瞰では板が小さく、
+  // 画面を見ただけではどれを追っているのか分からない
+  if (!state.explore && state.watch && state.voxScene) {
+    hud.classList.remove('hidden');
+    hud.innerHTML = `<b>${state.watch.name}</b>（${state.watch.group}・全長 ${state.watch.size}m）を目で追っています\n`
+      + `${state.voxScene.fauna.indexOf(state.watch) + 1} / ${state.voxScene.fauna.length} 頭目　<i>F で次の生き物へ</i>`;
+    return;
+  }
+  if (!state.explore || !state.explorer) {
+    hud.textContent = '';
+    hud.classList.add('hidden');
+    return;
+  }
   const st = state.explorer.status();
   const s = state.voxScene;
   if (!st) return;
@@ -362,7 +395,7 @@ function updateVoxHud() {
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
     `${mode}　${(st.speed * VOX_M).toFixed(0)} m/s　目線 ${Math.round(st.eyeM).toLocaleString()}m\n` +
     (state.watch
-      ? `<b>${state.watch.name}</b> を目で追っています（${Math.round(Math.hypot(state.watch.x - st.x, state.watch.z - st.z) * VOX_M)}m）\n`
+      ? `<b>${state.watch.name}</b> を目で追っています（${Math.round(Math.hypot(state.watch.x - st.x, state.watch.z - st.z) * VOX_M)}m・${s.fauna.indexOf(state.watch) + 1}/${s.fauna.length} 頭目）\n`
       : near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）\n` : '') +
     // 指の端末には操作盤が出ているので、キーの案内は場所の無駄にしかならない
     (IS_TOUCH ? '' : `<i>WASD 移動 / Space 跳ぶ / Shift 走る / V 飛行 / E 抜ける</i>`);
@@ -866,7 +899,8 @@ voxCanvas.addEventListener('pointerleave', () => { vdrag = null; voxCanvas.class
 voxCanvas.addEventListener('wheel', (e) => {
   if (!vox || !vox.ok) return;
   e.preventDefault();
-  vox.zoom(Math.exp(-e.deltaY * 0.0016));
+  // カーソルの先へ寄る。中心固定だと、見たいものを真ん中へ運んでから寄せる手間がいる
+  vox.zoomAt(...voxPoint(e), Math.exp(-e.deltaY * 0.0016));
   draw();
 }, { passive: false });
 
@@ -913,7 +947,7 @@ window.addEventListener('keydown', (e) => {
     }
     case 'n': if (state.view === 'pixel') descend(null, String(Math.random()).slice(2, 7)); break;
     case 'e': if (state.view === 'pixel') setExplore(!state.explore); break;
-    case 'f': if (state.view === 'pixel') toggleWatch(); break;
+    case 'f': if (state.view === 'pixel') cycleWatch(); break;
     case 'w': case 'a': case 's': case 'd':
       // 俯瞰のときは注視点を平行移動する（探索中は上で処理済み）
       if (state.view !== 'pixel' || !vox || !vox.ok) return;
@@ -1293,7 +1327,7 @@ function stickSet(next) {
       continue;
     }
     if (act === 'watch') {
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); toggleWatch(); });
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); cycleWatch(); });
       continue;
     }
     if (act === 'fly') {
@@ -1380,7 +1414,11 @@ enablePinch(canvas, (f, mx, my) => {
   renderer.zoomAt((mx - r.left) * dpr, (my - r.top) * dpr, f);
 });
 enablePinch(globeCanvas, (f) => { if (globe && globe.ok) globe.zoom(f); });
-enablePinch(voxCanvas, (f) => { if (vox && vox.ok && !state.explore) vox.zoom(f); });
+enablePinch(voxCanvas, (f, mx, my) => {
+  if (!vox || !vox.ok || state.explore) return;
+  const r = voxCanvas.getBoundingClientRect();
+  vox.zoomAt(((mx - r.left) / r.width) * voxCanvas.width, ((my - r.top) / r.height) * voxCanvas.height, f);
+});
 
 // ---------- 動物の絵の差し替え ------------------------------------------
 // PNG を選ぶと、その場で板の絵が変わる。file:// でも読めるよう、

@@ -152,6 +152,25 @@ async function testPhone(url) {
     if (g.reroll === '別の箱庭へ') ok('降り直しの行き先が箱庭になる');
     else ng(`降り直しが箱庭を指していない（${g.reroll}）`);
 
+    // ズームは中心ではなくカーソルの先へ寄ること。中心固定だと、見たいものを
+    // いちいち画面の真ん中へ運んでから寄せることになる
+    {
+      const snap = async () => {
+        const r = await b.send('Page.captureScreenshot', { format: 'png' });
+        let h = 0;
+        for (let i = 0; i < r.result.data.length; i += 191) h = (h * 31 + r.result.data.charCodeAt(i)) >>> 0;
+        return h;
+      };
+      const before = await snap();
+      for (let i = 0; i < 5; i++) {
+        await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 180, y: 190, deltaX: 0, deltaY: -240 });
+        await b.sleep(110);
+      }
+      await b.sleep(500);
+      if ((await snap()) !== before) ok('ホイールでカーソルの先へ寄れる');
+      else ng('ホイールで絵が変わらない');
+    }
+
     // 観察へ戻せること
     await b.evaluate(`document.querySelector('#modeswitch button[data-mode="observe"]').click()`);
     await b.sleep(1200);
@@ -248,6 +267,26 @@ async function testPhone(url) {
     if (watching && btnOn) ok('F で近くの生き物を目で追い始める');
     else if (!(await b.evaluate(`!!document.getElementById('vox-hud').textContent.match(/近くに|目で追/)`))) ok('近くに生き物が居ないので、追跡は検証しない');
     else ng(`目で追えない（HUD ${watching} / ボタン ${btnOn}）`);
+
+    // 生き物を順に巡れること。一体しか追えないと、群れの中の見たい一頭を選べない
+    {
+      const read = async () => {
+        const t = await b.evaluate(`document.getElementById('vox-hud')?.textContent || ''`);
+        const m = t.match(/(\d+)\s*\/\s*(\d+) 頭目/);
+        return m ? `${m[1]}/${m[2]}` : null;
+      };
+      const seq = [];
+      for (let i = 0; i < 4; i++) {
+        await b.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }))`);
+        await b.sleep(500);
+        seq.push(await read());
+      }
+      const nums = seq.filter(Boolean).map((v) => Number(v.split('/')[0]));
+      const total = seq.find(Boolean) ? Number(seq.find(Boolean).split('/')[1]) : 0;
+      if (total <= 1) ok('この区画は生き物が一頭なので、巡りは検証しない');
+      else if (new Set(nums).size >= Math.min(3, total)) ok(`F を押すごとに次の生き物へ移る（${seq.join(' → ')}）`);
+      else ng(`同じ個体から動かない（${seq.join(' → ')}）`);
+    }
 
     // なぞったら追うのをやめること（見たい方を見られないと窮屈）
     await b.touch('touchStart', [{ x: 300, y: 300, id: 5 }]);

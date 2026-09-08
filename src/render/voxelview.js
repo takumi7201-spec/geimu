@@ -934,6 +934,26 @@ export class VoxelRenderer {
     this.cam.dist = clamp(this.cam.dist / f, 6, s ? s.total * 0.9 : 400);
   }
 
+  /**
+   * カーソルの先へ寄っていくズーム。中心にしか寄れないと、見たいものを
+   * いちいち画面の真ん中へ運んでから寄せることになる。
+   * 引くときは逆にカーソルから離れる（地図のズームと同じ手触り）。
+   */
+  zoomAt(sx, sy, f) {
+    if (this.firstPerson) return;
+    const s = this.scene;
+    const before = this.cam.dist;
+    this.cam.dist = clamp(before / f, 6, s ? s.total * 0.9 : 400);
+    if (!s || before <= 0) return;
+    const hit = this.pick(sx, sy);
+    if (!hit) return;
+    // 縮めたぶんだけ注視点を寄せる。丸ごと寄せると一回で飛び越える
+    const k = clamp(1 - this.cam.dist / before, -0.6, 0.6);
+    this.cam.x = clamp(this.cam.x + (hit.x + 0.5 - this.cam.x) * k, 0, s.total);
+    this.cam.z = clamp(this.cam.z + (hit.z + 0.5 - this.cam.z) * k, 0, s.total);
+    this.cam.y += (hit.y + 1 - this.cam.y) * k;
+  }
+
   /** 一人称に切り替える。dist を 0 にすると注視点＝目の位置になる */
   setFirstPerson(on) {
     this.firstPerson = on;
