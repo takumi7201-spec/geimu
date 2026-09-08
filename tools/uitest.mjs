@@ -126,8 +126,36 @@ async function testPhone(url) {
     await b.sleep(1200);
     ok('地表の区画が組み上がる');
 
-    await b.evaluate(`document.getElementById('vox-explore').click()`);
+    // ゲームモード：箱庭に降りて、そのまま探索が始まること
+    await b.evaluate(`document.querySelector('#modeswitch button[data-mode="game"]').click()`);
+    await b.sleep(2500);
+    await b.waitReady();
+    await b.sleep(2000);
+    const gm = await b.evaluate(`JSON.stringify({
+      on: document.querySelector('#modeswitch .on')?.textContent,
+      body: document.body.classList.contains('game-mode'),
+      hud: !document.getElementById('vox-hud').classList.contains('hidden'),
+      panels: [...document.querySelectorAll('#sidebar .panel')].filter(p => getComputedStyle(p).display !== 'none').length,
+      reroll: document.getElementById('vox-reroll')?.textContent,
+    })`);
+    const g = JSON.parse(gm);
+    if (g.on === 'ゲーム' && g.body && g.hud) ok('ゲームに切り替えると箱庭に降りて探索が始まる');
+    else ng(`ゲームに切り替わらない（${gm}）`);
+    if (g.reroll === '別の箱庭へ') ok('降り直しの行き先が箱庭になる');
+    else ng(`降り直しが箱庭を指していない（${g.reroll}）`);
+
+    // 観察へ戻せること
+    await b.evaluate(`document.querySelector('#modeswitch button[data-mode="observe"]').click()`);
     await b.sleep(1200);
+    if (!(await b.evaluate(`document.body.classList.contains('game-mode')`))) ok('観察へ戻せる');
+    else ng('観察へ戻らない');
+
+    // ゲームへ戻して、以降の検証は探索状態で続ける
+    await b.evaluate(`document.querySelector('#modeswitch button[data-mode="game"]').click()`);
+    await b.sleep(2500);
+    await b.waitReady();
+    await b.sleep(1500);
+
     if (await b.evaluate(`document.getElementById('touch').classList.contains('hidden')`)) return ng('操作盤が出ない');
     ok('探索に入ると操作盤が出る');
 

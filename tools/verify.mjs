@@ -11,7 +11,7 @@ import { buildRegions, buildLandmarks } from '../src/world/regions.js';
 import { BIOMES } from '../src/world/biomes.js';
 import { ERAS } from '../src/world/eras.js';
 import { eraAtAge, AGE_MIN, AGE_MAX } from '../src/world/timeline.js';
-import { buildVoxelScene, pickScenicSpot, WATER_NONE } from '../src/voxel/scene.js';
+import { buildVoxelScene, pickScenicSpot, pickSandboxSpot, WATER_NONE } from '../src/voxel/scene.js';
 import { VOX_M, BLOCKS, groundOf } from '../src/voxel/blocks.js';
 import { spriteForGroup, SPRITE_FALLBACK } from '../src/voxel/models.js';
 import { sprite, SPRITE_KEYS } from '../src/voxel/sprites.js';
@@ -276,6 +276,41 @@ console.log('\n[地表ボクセル]');
 }
 
 // ---- 5. ゲーム層（当たり判定・出現・書き出し） --------------------------
+console.log('\n[ゲームの箱庭]');
+{
+  // ゲームモードの舞台。陸・海・空・山・森がひとつに収まっていること。
+  // どれか欠けると、降りた先が海だけ・平地だけになって遊び場にならない
+  for (const ma of [230, 160, 90]) {
+    const w = await generateWorld({ seed: 'pangaea', ma, size: 'medium' });
+    const spot = pickSandboxSpot(w);
+    const s = await buildVoxelScene(w, { x: spot.x, y: spot.y, size: 'medium' });
+    const T = s.total, n = T * T;
+    let wet = 0, lo = Infinity, hi = -Infinity, trunks = 0;
+    for (let i = 0; i < n; i++) {
+      const h = s.height[i], wl = s.water[i];
+      if (wl !== WATER_NONE && wl > h) wet++;
+      if (h < lo) lo = h;
+      if (h > hi) hi = h;
+      if (s.blockers[i]) trunks++;
+    }
+    const wetPct = (wet / n) * 100;
+    const relief = (hi - lo) * VOX_M;
+    const land = s.fauna.filter((f) => !f.flying && !f.swimming).length;
+    const air = s.fauna.filter((f) => f.flying).length;
+    const sea = s.fauna.filter((f) => f.swimming).length;
+    const tag = `${ma}Ma`;
+    const bad = [];
+    if (wetPct < 3) bad.push(`水がほとんど無い（${wetPct.toFixed(0)}%）`);
+    if (wetPct > 70) bad.push(`水浸し（${wetPct.toFixed(0)}%）`);
+    if (relief < 250) bad.push(`起伏が乏しい（${relief.toFixed(0)}m）`);
+    if (trunks < 200) bad.push(`木が少ない（幹 ${trunks}）`);
+    if (!land) bad.push('地を歩く生き物が居ない');
+    if (!air && !sea) bad.push('空にも海にも生き物が居ない');
+    if (bad.length) fail(`${tag} の箱庭：${bad.join(' / ')}`);
+    else pass(`${tag} 水面 ${wetPct.toFixed(0)}% ／ 起伏 ${relief.toFixed(0)}m ／ 幹 ${trunks} ／ 陸 ${land}・空 ${air}・海 ${sea}`);
+  }
+}
+
 console.log('\n[動物の動き]');
 {
   const game = await createGameWorld({ seed: 'pangaea', ma: 160, size: 'small' });

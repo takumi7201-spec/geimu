@@ -349,6 +349,11 @@ button.mini.wide { width: 100%; padding: 7px; }
 .touch-only { display: none; }
 body.touch .touch-only { display: revert; }
 
+/* ---- 観察モードとゲームモード ---- */
+.mode-note { margin: 9px 0 0; }
+body.game-mode .observe-only { display: none; }
+#modeswitch { grid-template-columns: repeat(2, 1fr); }
+
 </style>
 </head>
 <body>
@@ -361,6 +366,15 @@ body.touch .touch-only { display: revert; }
     </header>
 
     <section class="panel">
+      <h2>あそびかた</h2>
+      <div class="viewswitch" id="modeswitch">
+        <button data-mode="observe" class="on">観察</button>
+        <button data-mode="game">ゲーム</button>
+      </div>
+      <p class="hint mode-note" id="mode-note"></p>
+    </section>
+
+    <section class="panel observe-only">
       <h2>表示方式</h2>
       <div class="viewswitch" id="viewswitch">
         <button data-view="2d" class="on">2D 地図</button>
@@ -440,12 +454,12 @@ body.touch .touch-only { display: revert; }
       </details>
     </section>
 
-    <section class="panel">
+    <section class="panel observe-only">
       <h2>凡例</h2>
       <div id="legend" class="legend"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel observe-only">
       <h2>この世界の統計</h2>
       <div id="stats" class="stats"></div>
     </section>
@@ -3933,7 +3947,7 @@ return { PLANT_BUILDERS, FAUNA_BUILDERS, spriteForGroup, SPRITE_GROUPS, SWIM_SPR
 })();
 
 // ===== src/voxel/scene.js =====
-const { WATER_NONE, SCENE_SIZES, pickScenicSpot, buildVoxelScene, strataFor } = await (async () => {
+const { WATER_NONE, SCENE_SIZES, pickScenicSpot, pickSandboxSpot, buildVoxelScene, strataFor } = await (async () => {
 /**
  * 地表ボクセル世界の生成（DOM 非依存）。
  *
@@ -4036,6 +4050,62 @@ function pickScenicSpot(world, marks = [], seed = '') {
  * @param {object} world  generateWorld() の結果
  * @param {{x:number, y:number, size?:string, variant?:string}} opts  x,y はマップのセル座標
  */
+/**
+ * 遊び場にする区画を選ぶ。陸・海・山・森がひとつに収まる場所を探す。
+ *
+ * 区画は 3km 四方で、マップ 1 セル（約 20km）の 6 分の 1 しかない。だから
+ * 「汀線がその中を通り、起伏があり、木が育つ湿り気のある」セルを選ばないと、
+ * 海しかない箱庭や、見渡すかぎり平地の箱庭になる。
+ * pickScenicSpot は眺めの良さだけを見るので、山や森は保証されない。
+ */
+function pickSandboxSpot(world, seed = '') {
+  const rand = rngFromSeed(`${world.seed}:sandbox:${seed}:${Math.round(world.era.ma ?? 0)}`);
+  const at = (x, y) => world.idx(x, y);
+  // 泳ぐ種と飛ぶ種を除いた「地を歩く顔ぶれ」。この紀に居るものだけ
+  const landSpecies = (FAUNA[world.era.id] || []).filter((f) => {
+    const k = spriteForGroup(f.group);
+    return !SWIM_SPRITES.has(k) && !FLY_SPRITES.has(k);
+  });
+  let best = null, bestScore = -Infinity;
+
+  for (let k = 0; k < 7000; k++) {
+    const x = (rand() * world.w) | 0;
+    const y = ((0.12 + rand() * 0.76) * world.h) | 0;   // 極は避ける（氷も砂漠も無い温室地球でも、極夜の絵は退屈）
+    const i = at(x, y);
+    if (world.elev[i] <= 0.004) continue;               // 陸であること
+
+    // 海までの距離（セル）。0 だと海ばかり、遠いと汀線が区画に入らない
+    const d = world.dist[i];
+    if (d < 0.55 || d > 2.4) continue;
+
+    // 近傍の標高差＝山らしさ
+    let lo = Infinity, hi = -Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const e = world.elev[at(x + dx, y + dy)];
+        if (e < lo) lo = e;
+        if (e > hi) hi = e;
+      }
+    }
+    const relief = hi - lo;
+
+    const moist = world.moistAt(i);
+    const temp = world.tempAt(i);
+    const elev = world.elev[i];
+    // 歩く生き物が棲めるバイオームか。海と空の種しか居ない箱庭は、
+    // 降りても足元に何も居らず、遊び場にならない
+    const walkable = landSpecies.some((f) => f.biomes.includes(world.biomeAt(i))) ? 1 : 0;
+    // 木が育つ湿り気と暖かさ。乾きすぎ・寒すぎでは森にならない
+    const forest = clamp((moist - 0.34) / 0.38, 0, 1) * clamp((temp - 8) / 12, 0, 1);
+    const mountain = clamp(relief / 0.11, 0, 1) * 0.68 + clamp((elev - 0.18) / 0.42, 0, 1) * 0.32;
+    const coast = 1 - Math.abs(d - 1.3) / 1.3;
+
+    const score = coast * 1.5 + forest * 1.4 + mountain * 1.3 + walkable * 2.2 + rand() * 0.22;
+    if (score > bestScore) { bestScore = score; best = { x, y, from: null, score }; }
+  }
+  return best || pickScenicSpot(world, [], seed);
+}
+
 async function buildVoxelScene(world, opts, onProgress = () => {}) {
   const t0 = Date.now();
   const size = opts.size in SCENE_SIZES ? opts.size : 'medium';
@@ -4422,9 +4492,21 @@ async function buildVoxelScene(world, opts, onProgress = () => {}) {
   let pool = (FAUNA[eraId] || []).filter((f) => f.biomes.some((b) => here.has(b)));
   if (!pool.length) pool = (FAUNA[eraId] || []).filter((f) => /翼竜/.test(f.group));
   if (!pool.length) pool = (FAUNA[eraId] || []).filter((f) => f.biomes.some((b) => !WATER_BIOMES.has(b)));
-  const herds = 2 + ((rand() * 3) | 0);
+  // 陸・空・海をひと通り出すには三群は要る（少ないと海の顔ぶれが出ない）
+  const herds = 3 + ((rand() * 2) | 0);
+  // 陸・空・海で顔ぶれを分けておく。抽選任せにすると、水辺の区画では
+  // 海と空の種ばかりが当たって足元に何も居なかったり、逆に空が空だったりする。
+  // 最初の三群でそれぞれから採り、あとは自由に引く
+  const byHabitat = { land: [], sky: [], sea: [] };
+  for (const f of pool) {
+    const k = spriteForGroup(f.group);
+    byHabitat[FLY_SPRITES.has(k) ? 'sky' : SWIM_SPRITES.has(k) ? 'sea' : 'land'].push(f);
+  }
+  const order = ['land', 'sky', 'sea'];
   for (let hcount = 0; hcount < herds && pool.length; hcount++) {
-    const sp = pool[(rand() * pool.length) | 0];
+    const want = hcount < order.length ? byHabitat[order[hcount]] : null;
+    const from = want && want.length ? want : pool;
+    const sp = from[(rand() * from.length) | 0];
     const kind = spriteForGroup(sp.group);
     const flying = FLY_SPRITES.has(kind);
     const swimming = SWIM_SPRITES.has(kind);
@@ -4433,13 +4515,24 @@ async function buildVoxelScene(world, opts, onProgress = () => {}) {
     const count = 1 + ((rand() * (sp.size > 12 ? 2 : 4)) | 0);
     const hx = lo + ((rand() * propArea) | 0), hz = lo + ((rand() * propArea) | 0);
     for (let k = 0; k < count; k++) {
-      const x = clamp(hx + ((rand() - 0.5) * 26) | 0, 2, total - 3);
-      const z = clamp(hz + ((rand() - 0.5) * 26) | 0, 2, total - 3);
-      const i2 = z * total + x;
-      const hb = height[i2], wl = water[i2];
-      const wet = wl !== WATER_NONE && wl > hb;
-      if (swimming && !wet) continue;
-      if (!swimming && !flying && wet) continue;
+      // 置ける所が見つかるまで引き直す。一度で諦めると、群れの居場所が
+      // 水際に寄った区画では 1 頭も置けず、生き物のいない世界になる
+      let x = 0, z = 0, hb = 0, wl = 0, wet = false, ok = false;
+      for (let tries = 0; tries < 14 && !ok; tries++) {
+        // 何度も外したら、群れの中心にこだわらず区画全体から探す
+        const spread = tries < 8 ? 26 : propArea;
+        const ox = tries < 8 ? hx : lo + ((rand() * propArea) | 0);
+        const oz = tries < 8 ? hz : lo + ((rand() * propArea) | 0);
+        x = clamp(ox + ((rand() - 0.5) * spread) | 0, 2, total - 3);
+        z = clamp(oz + ((rand() - 0.5) * spread) | 0, 2, total - 3);
+        const i2 = z * total + x;
+        hb = height[i2]; wl = water[i2];
+        wet = wl !== WATER_NONE && wl > hb;
+        if (swimming && !wet) continue;
+        if (!swimming && !flying && wet) continue;
+        ok = true;
+      }
+      if (!ok) continue;
       fauna.push({
         sprite: kind, x, z,
         y: flying ? Math.max(hb, wl === WATER_NONE ? hb : wl) + 8 + ((rand() * 14) | 0) : (wet ? wl : hb) + 1,
@@ -4488,7 +4581,7 @@ async function buildVoxelScene(world, opts, onProgress = () => {}) {
 function strataFor(scene, y) {
   return strataAt(y, scene.salt, scene.suite);
 }
-return { WATER_NONE, SCENE_SIZES, pickScenicSpot, buildVoxelScene, strataFor };
+return { WATER_NONE, SCENE_SIZES, pickScenicSpot, pickSandboxSpot, buildVoxelScene, strataFor };
 })();
 
 // ===== src/voxel/sprites.js =====
@@ -4934,6 +5027,10 @@ class VoxelRenderer {
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mb.idx.subarray(0, mb.icount), gl.STATIC_DRAW);
       return { vb, ib, count: mb.icount };
     };
+    // 古いバッファを消す前に、頂点属性の列を全部外す。消えたバッファを指したままの
+    // 列が残ると、次の描画がまるごと INVALID_OPERATION で落ちる（絵は出るが
+    // GL のエラーが立ち、以降の検証がすべて汚れる）
+    for (let a = 0; a < 8; a++) gl.disableVertexAttribArray(a);
     if (this.solid) { gl.deleteBuffer(this.solid.vb); gl.deleteBuffer(this.solid.ib); }
     if (this.water) { gl.deleteBuffer(this.water.vb); gl.deleteBuffer(this.water.ib); }
     this._shadowMVP = null;   // 地形が変わったので焼き直す
@@ -5388,7 +5485,7 @@ class VoxelRenderer {
       gl.uniformMatrix4fv(loc.uMVP, false, mvp);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.solid.ib);
       gl.drawElements(gl.TRIANGLES, this.solid.count, gl.UNSIGNED_INT, 0);
-      gl.disableVertexAttribArray(loc.aPos);
+        gl.disableVertexAttribArray(loc.aPos);
     }
     if (this.spriteMesh && this.layers.fauna) {
       const { p, loc } = this.progDepthSprite;
@@ -5407,7 +5504,7 @@ class VoxelRenderer {
       gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
       gl.uniform1i(loc.uTex, 0);
       gl.drawArrays(gl.TRIANGLES, 0, this.spriteMesh.count);
-      gl.disableVertexAttribArray(loc.aCenter);
+        gl.disableVertexAttribArray(loc.aCenter);
       gl.disableVertexAttribArray(loc.aCorner);
       gl.disableVertexAttribArray(loc.aUV);
     }
@@ -5636,7 +5733,7 @@ class VoxelRenderer {
       gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
       gl.uniform1i(loc.uTex, 0);
       gl.drawArrays(gl.TRIANGLES, 0, this.spriteMesh.count);
-      // 次のパスは頂点の並びが違う。有効にした列を残すと、無い属性を読みに行く
+        // 次のパスは頂点の並びが違う。有効にした列を残すと、無い属性を読みに行く
       gl.disableVertexAttribArray(loc.aCenter);
       gl.disableVertexAttribArray(loc.aCorner);
       gl.disableVertexAttribArray(loc.aUV);
@@ -5652,7 +5749,7 @@ class VoxelRenderer {
       const loc = bind(this.progWater, this.water);
       gl.uniform1f(loc.uTime, this.time);
       gl.drawElements(gl.TRIANGLES, this.water.count, gl.UNSIGNED_INT, 0);
-      gl.enable(gl.CULL_FACE);
+        gl.enable(gl.CULL_FACE);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     }
@@ -6594,6 +6691,7 @@ const state = {
   explore: false,     // 一人称の探索モード
   explorer: null,
   watch: null,        // 目で追っている個体（scene.fauna の実体を掴む）
+  mode: 'observe',    // observe（見て回る）か game（箱庭で遊ぶ）
 };
 
 /** 現在の年代が属する紀（キーフレームちょうどでなくても近いほうを返す） */
@@ -6685,7 +6783,7 @@ function buildViewSwitch() {
   }
 }
 
-function setView(view) {
+function setView(view, opts = {}) {
   state.view = view;
   for (const b of $('#viewswitch').children) b.classList.toggle('on', b.dataset.view === view);
   const is3d = view === '3d';
@@ -6705,7 +6803,9 @@ function setView(view) {
   buildStats();
   resize();
   if (isVox) startVoxLoop();
-  if (isVox && vox && vox.ok && (state.voxDirty || !state.voxScene)) descend(state.voxSpot);
+  // 呼び出し側が自分で区画を選ぶときは、ここで先に作らせない。
+  // 二つの descend が走ると、後から来たほうが busy で弾かれて何も起きない
+  if (isVox && vox && vox.ok && !opts.keepScene && (state.voxDirty || !state.voxScene)) descend(state.voxSpot);
   else draw();
 }
 
@@ -6789,6 +6889,45 @@ async function descend(spot = null, variant = '') {
  * 操作は `game/player.js`（DOM 非依存）に閉じてあるので、
  * ゲームに持っていくときはこのアプリ側の配線だけを書き換えればよい。
  */
+// ---------- 観察とゲーム ---------------------------------------------------
+// 観察は世界のどこでも見て回れる。ゲームは、陸・海・空・山・森がひとつに
+// 収まる区画（箱庭）に降りて、そこで遊ぶ。
+
+function markMode() {
+  for (const b of $('#modeswitch').children) b.classList.toggle('on', b.dataset.mode === state.mode);
+  document.body.classList.toggle('game-mode', state.mode === 'game');
+  $('#mode-note').textContent = state.mode === 'game'
+    ? '陸・海・空・山・森がひとつに収まる区画に降ります。'
+    : '世界じゅうを地図・地球儀・地表で見て回れます。';
+  const rr = $('#vox-reroll');
+  if (rr) rr.textContent = state.mode === 'game' ? '別の箱庭へ' : '別の場所へ降りる';
+}
+
+function buildModeSwitch() {
+  for (const b of $('#modeswitch').children) b.onclick = () => setMode(b.dataset.mode);
+  markMode();
+}
+
+async function setMode(m) {
+  if (state.mode === m || state.busy) return;
+  state.mode = m;
+  markMode();
+  if (m === 'game') {
+    // 区画は enterSandbox が選ぶので、切り替えのついでに作らせない
+    if (state.view !== 'pixel') setView('pixel', { keepScene: true });
+    await enterSandbox();
+  } else if (state.explore) {
+    setExplore(false);
+  }
+}
+
+/** 遊び場に降りる。条件の揃った区画を選び、そのまま探索に入る */
+async function enterSandbox(variant = '') {
+  if (!state.world) return;
+  await descend(pickSandboxSpot(state.world, variant), `sandbox:${variant}`);
+  if (state.voxScene && !state.explore) setExplore(true);
+}
+
 // ---------- 生き物を目で追う ----------------------------------------------
 // 6m の獣脚類は、区画を一望する縮尺だと数画素にしかならない。
 // 一人称では視線を、俯瞰ではカメラごと寄せて、姿が見える大きさにする。
@@ -6895,7 +7034,10 @@ function buildVoxControls() {
     resize();
     draw();
   };
-  $('#vox-reroll').onclick = () => descend(null, String(Math.random()).slice(2, 7));
+  $('#vox-reroll').onclick = () => {
+    const salt = String(Math.random()).slice(2, 7);
+    return state.mode === 'game' ? enterSandbox(salt) : descend(null, salt);
+  };
   $('#vox-explore').onclick = () => setExplore(!state.explore);
 }
 
@@ -7661,6 +7803,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   });
 }
 
+buildModeSwitch();
 buildViewSwitch();
 buildVoxControls();
 buildVoxPlace();

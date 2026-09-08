@@ -101,6 +101,62 @@ export function pickScenicSpot(world, marks = [], seed = '') {
  * @param {object} world  generateWorld() の結果
  * @param {{x:number, y:number, size?:string, variant?:string}} opts  x,y はマップのセル座標
  */
+/**
+ * 遊び場にする区画を選ぶ。陸・海・山・森がひとつに収まる場所を探す。
+ *
+ * 区画は 3km 四方で、マップ 1 セル（約 20km）の 6 分の 1 しかない。だから
+ * 「汀線がその中を通り、起伏があり、木が育つ湿り気のある」セルを選ばないと、
+ * 海しかない箱庭や、見渡すかぎり平地の箱庭になる。
+ * pickScenicSpot は眺めの良さだけを見るので、山や森は保証されない。
+ */
+export function pickSandboxSpot(world, seed = '') {
+  const rand = rngFromSeed(`${world.seed}:sandbox:${seed}:${Math.round(world.era.ma ?? 0)}`);
+  const at = (x, y) => world.idx(x, y);
+  // 泳ぐ種と飛ぶ種を除いた「地を歩く顔ぶれ」。この紀に居るものだけ
+  const landSpecies = (FAUNA[world.era.id] || []).filter((f) => {
+    const k = spriteForGroup(f.group);
+    return !SWIM_SPRITES.has(k) && !FLY_SPRITES.has(k);
+  });
+  let best = null, bestScore = -Infinity;
+
+  for (let k = 0; k < 7000; k++) {
+    const x = (rand() * world.w) | 0;
+    const y = ((0.12 + rand() * 0.76) * world.h) | 0;   // 極は避ける（氷も砂漠も無い温室地球でも、極夜の絵は退屈）
+    const i = at(x, y);
+    if (world.elev[i] <= 0.004) continue;               // 陸であること
+
+    // 海までの距離（セル）。0 だと海ばかり、遠いと汀線が区画に入らない
+    const d = world.dist[i];
+    if (d < 0.55 || d > 2.4) continue;
+
+    // 近傍の標高差＝山らしさ
+    let lo = Infinity, hi = -Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const e = world.elev[at(x + dx, y + dy)];
+        if (e < lo) lo = e;
+        if (e > hi) hi = e;
+      }
+    }
+    const relief = hi - lo;
+
+    const moist = world.moistAt(i);
+    const temp = world.tempAt(i);
+    const elev = world.elev[i];
+    // 歩く生き物が棲めるバイオームか。海と空の種しか居ない箱庭は、
+    // 降りても足元に何も居らず、遊び場にならない
+    const walkable = landSpecies.some((f) => f.biomes.includes(world.biomeAt(i))) ? 1 : 0;
+    // 木が育つ湿り気と暖かさ。乾きすぎ・寒すぎでは森にならない
+    const forest = clamp((moist - 0.34) / 0.38, 0, 1) * clamp((temp - 8) / 12, 0, 1);
+    const mountain = clamp(relief / 0.11, 0, 1) * 0.68 + clamp((elev - 0.18) / 0.42, 0, 1) * 0.32;
+    const coast = 1 - Math.abs(d - 1.3) / 1.3;
+
+    const score = coast * 1.5 + forest * 1.4 + mountain * 1.3 + walkable * 2.2 + rand() * 0.22;
+    if (score > bestScore) { bestScore = score; best = { x, y, from: null, score }; }
+  }
+  return best || pickScenicSpot(world, [], seed);
+}
+
 export async function buildVoxelScene(world, opts, onProgress = () => {}) {
   const t0 = Date.now();
   const size = opts.size in SCENE_SIZES ? opts.size : 'medium';
@@ -487,9 +543,21 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
   let pool = (FAUNA[eraId] || []).filter((f) => f.biomes.some((b) => here.has(b)));
   if (!pool.length) pool = (FAUNA[eraId] || []).filter((f) => /翼竜/.test(f.group));
   if (!pool.length) pool = (FAUNA[eraId] || []).filter((f) => f.biomes.some((b) => !WATER_BIOMES.has(b)));
-  const herds = 2 + ((rand() * 3) | 0);
+  // 陸・空・海をひと通り出すには三群は要る（少ないと海の顔ぶれが出ない）
+  const herds = 3 + ((rand() * 2) | 0);
+  // 陸・空・海で顔ぶれを分けておく。抽選任せにすると、水辺の区画では
+  // 海と空の種ばかりが当たって足元に何も居なかったり、逆に空が空だったりする。
+  // 最初の三群でそれぞれから採り、あとは自由に引く
+  const byHabitat = { land: [], sky: [], sea: [] };
+  for (const f of pool) {
+    const k = spriteForGroup(f.group);
+    byHabitat[FLY_SPRITES.has(k) ? 'sky' : SWIM_SPRITES.has(k) ? 'sea' : 'land'].push(f);
+  }
+  const order = ['land', 'sky', 'sea'];
   for (let hcount = 0; hcount < herds && pool.length; hcount++) {
-    const sp = pool[(rand() * pool.length) | 0];
+    const want = hcount < order.length ? byHabitat[order[hcount]] : null;
+    const from = want && want.length ? want : pool;
+    const sp = from[(rand() * from.length) | 0];
     const kind = spriteForGroup(sp.group);
     const flying = FLY_SPRITES.has(kind);
     const swimming = SWIM_SPRITES.has(kind);
@@ -498,13 +566,24 @@ export async function buildVoxelScene(world, opts, onProgress = () => {}) {
     const count = 1 + ((rand() * (sp.size > 12 ? 2 : 4)) | 0);
     const hx = lo + ((rand() * propArea) | 0), hz = lo + ((rand() * propArea) | 0);
     for (let k = 0; k < count; k++) {
-      const x = clamp(hx + ((rand() - 0.5) * 26) | 0, 2, total - 3);
-      const z = clamp(hz + ((rand() - 0.5) * 26) | 0, 2, total - 3);
-      const i2 = z * total + x;
-      const hb = height[i2], wl = water[i2];
-      const wet = wl !== WATER_NONE && wl > hb;
-      if (swimming && !wet) continue;
-      if (!swimming && !flying && wet) continue;
+      // 置ける所が見つかるまで引き直す。一度で諦めると、群れの居場所が
+      // 水際に寄った区画では 1 頭も置けず、生き物のいない世界になる
+      let x = 0, z = 0, hb = 0, wl = 0, wet = false, ok = false;
+      for (let tries = 0; tries < 14 && !ok; tries++) {
+        // 何度も外したら、群れの中心にこだわらず区画全体から探す
+        const spread = tries < 8 ? 26 : propArea;
+        const ox = tries < 8 ? hx : lo + ((rand() * propArea) | 0);
+        const oz = tries < 8 ? hz : lo + ((rand() * propArea) | 0);
+        x = clamp(ox + ((rand() - 0.5) * spread) | 0, 2, total - 3);
+        z = clamp(oz + ((rand() - 0.5) * spread) | 0, 2, total - 3);
+        const i2 = z * total + x;
+        hb = height[i2]; wl = water[i2];
+        wet = wl !== WATER_NONE && wl > hb;
+        if (swimming && !wet) continue;
+        if (!swimming && !flying && wet) continue;
+        ok = true;
+      }
+      if (!ok) continue;
       fauna.push({
         sprite: kind, x, z,
         y: flying ? Math.max(hb, wl === WATER_NONE ? hb : wl) + 8 + ((rand() * 14) | 0) : (wet ? wl : hb) + 1,

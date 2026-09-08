@@ -390,6 +390,10 @@ export class VoxelRenderer {
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mb.idx.subarray(0, mb.icount), gl.STATIC_DRAW);
       return { vb, ib, count: mb.icount };
     };
+    // 古いバッファを消す前に、頂点属性の列を全部外す。消えたバッファを指したままの
+    // 列が残ると、次の描画がまるごと INVALID_OPERATION で落ちる（絵は出るが
+    // GL のエラーが立ち、以降の検証がすべて汚れる）
+    for (let a = 0; a < 8; a++) gl.disableVertexAttribArray(a);
     if (this.solid) { gl.deleteBuffer(this.solid.vb); gl.deleteBuffer(this.solid.ib); }
     if (this.water) { gl.deleteBuffer(this.water.vb); gl.deleteBuffer(this.water.ib); }
     this._shadowMVP = null;   // 地形が変わったので焼き直す
@@ -844,7 +848,7 @@ export class VoxelRenderer {
       gl.uniformMatrix4fv(loc.uMVP, false, mvp);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.solid.ib);
       gl.drawElements(gl.TRIANGLES, this.solid.count, gl.UNSIGNED_INT, 0);
-      gl.disableVertexAttribArray(loc.aPos);
+        gl.disableVertexAttribArray(loc.aPos);
     }
     if (this.spriteMesh && this.layers.fauna) {
       const { p, loc } = this.progDepthSprite;
@@ -863,7 +867,7 @@ export class VoxelRenderer {
       gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
       gl.uniform1i(loc.uTex, 0);
       gl.drawArrays(gl.TRIANGLES, 0, this.spriteMesh.count);
-      gl.disableVertexAttribArray(loc.aCenter);
+        gl.disableVertexAttribArray(loc.aCenter);
       gl.disableVertexAttribArray(loc.aCorner);
       gl.disableVertexAttribArray(loc.aUV);
     }
@@ -1092,7 +1096,7 @@ export class VoxelRenderer {
       gl.bindTexture(gl.TEXTURE_2D, this.spriteTex);
       gl.uniform1i(loc.uTex, 0);
       gl.drawArrays(gl.TRIANGLES, 0, this.spriteMesh.count);
-      // 次のパスは頂点の並びが違う。有効にした列を残すと、無い属性を読みに行く
+        // 次のパスは頂点の並びが違う。有効にした列を残すと、無い属性を読みに行く
       gl.disableVertexAttribArray(loc.aCenter);
       gl.disableVertexAttribArray(loc.aCorner);
       gl.disableVertexAttribArray(loc.aUV);
@@ -1108,7 +1112,7 @@ export class VoxelRenderer {
       const loc = bind(this.progWater, this.water);
       gl.uniform1f(loc.uTime, this.time);
       gl.drawElements(gl.TRIANGLES, this.water.count, gl.UNSIGNED_INT, 0);
-      gl.enable(gl.CULL_FACE);
+        gl.enable(gl.CULL_FACE);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     }

@@ -9,7 +9,7 @@ import { FAUNA, FLORA, faunaFor } from './world/fauna.js';
 import { MapRenderer, VIEW_MODES } from './render/renderer.js';
 import { GlobeRenderer } from './render/globe.js';
 import { VoxelRenderer } from './render/voxelview.js';
-import { buildVoxelScene, pickScenicSpot, SCENE_SIZES, WATER_NONE } from './voxel/scene.js';
+import { buildVoxelScene, pickScenicSpot, pickSandboxSpot, SCENE_SIZES, WATER_NONE } from './voxel/scene.js';
 import { BLOCKS, VOX_M } from './voxel/blocks.js';
 import { SPRITE_GROUPS, SPRITE_FALLBACK } from './voxel/models.js';
 import { sprite, setSprite, isOverridden, clearSprites } from './voxel/sprites.js';
@@ -48,6 +48,7 @@ const state = {
   explore: false,     // 一人称の探索モード
   explorer: null,
   watch: null,        // 目で追っている個体（scene.fauna の実体を掴む）
+  mode: 'observe',    // observe（見て回る）か game（箱庭で遊ぶ）
 };
 
 /** 現在の年代が属する紀（キーフレームちょうどでなくても近いほうを返す） */
@@ -139,7 +140,7 @@ function buildViewSwitch() {
   }
 }
 
-function setView(view) {
+function setView(view, opts = {}) {
   state.view = view;
   for (const b of $('#viewswitch').children) b.classList.toggle('on', b.dataset.view === view);
   const is3d = view === '3d';
@@ -159,7 +160,9 @@ function setView(view) {
   buildStats();
   resize();
   if (isVox) startVoxLoop();
-  if (isVox && vox && vox.ok && (state.voxDirty || !state.voxScene)) descend(state.voxSpot);
+  // 呼び出し側が自分で区画を選ぶときは、ここで先に作らせない。
+  // 二つの descend が走ると、後から来たほうが busy で弾かれて何も起きない
+  if (isVox && vox && vox.ok && !opts.keepScene && (state.voxDirty || !state.voxScene)) descend(state.voxSpot);
   else draw();
 }
 
@@ -243,6 +246,45 @@ async function descend(spot = null, variant = '') {
  * 操作は `game/player.js`（DOM 非依存）に閉じてあるので、
  * ゲームに持っていくときはこのアプリ側の配線だけを書き換えればよい。
  */
+// ---------- 観察とゲーム ---------------------------------------------------
+// 観察は世界のどこでも見て回れる。ゲームは、陸・海・空・山・森がひとつに
+// 収まる区画（箱庭）に降りて、そこで遊ぶ。
+
+function markMode() {
+  for (const b of $('#modeswitch').children) b.classList.toggle('on', b.dataset.mode === state.mode);
+  document.body.classList.toggle('game-mode', state.mode === 'game');
+  $('#mode-note').textContent = state.mode === 'game'
+    ? '陸・海・空・山・森がひとつに収まる区画に降ります。'
+    : '世界じゅうを地図・地球儀・地表で見て回れます。';
+  const rr = $('#vox-reroll');
+  if (rr) rr.textContent = state.mode === 'game' ? '別の箱庭へ' : '別の場所へ降りる';
+}
+
+function buildModeSwitch() {
+  for (const b of $('#modeswitch').children) b.onclick = () => setMode(b.dataset.mode);
+  markMode();
+}
+
+async function setMode(m) {
+  if (state.mode === m || state.busy) return;
+  state.mode = m;
+  markMode();
+  if (m === 'game') {
+    // 区画は enterSandbox が選ぶので、切り替えのついでに作らせない
+    if (state.view !== 'pixel') setView('pixel', { keepScene: true });
+    await enterSandbox();
+  } else if (state.explore) {
+    setExplore(false);
+  }
+}
+
+/** 遊び場に降りる。条件の揃った区画を選び、そのまま探索に入る */
+async function enterSandbox(variant = '') {
+  if (!state.world) return;
+  await descend(pickSandboxSpot(state.world, variant), `sandbox:${variant}`);
+  if (state.voxScene && !state.explore) setExplore(true);
+}
+
 // ---------- 生き物を目で追う ----------------------------------------------
 // 6m の獣脚類は、区画を一望する縮尺だと数画素にしかならない。
 // 一人称では視線を、俯瞰ではカメラごと寄せて、姿が見える大きさにする。
@@ -349,7 +391,10 @@ function buildVoxControls() {
     resize();
     draw();
   };
-  $('#vox-reroll').onclick = () => descend(null, String(Math.random()).slice(2, 7));
+  $('#vox-reroll').onclick = () => {
+    const salt = String(Math.random()).slice(2, 7);
+    return state.mode === 'game' ? enterSandbox(salt) : descend(null, salt);
+  };
   $('#vox-explore').onclick = () => setExplore(!state.explore);
 }
 
@@ -1115,6 +1160,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   });
 }
 
+buildModeSwitch();
 buildViewSwitch();
 buildVoxControls();
 buildVoxPlace();

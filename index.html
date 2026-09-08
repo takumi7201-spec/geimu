@@ -24,6 +24,15 @@
     </header>
 
     <section class="panel">
+      <h2>あそびかた</h2>
+      <div class="viewswitch" id="modeswitch">
+        <button data-mode="observe" class="on">観察</button>
+        <button data-mode="game">ゲーム</button>
+      </div>
+      <p class="hint mode-note" id="mode-note"></p>
+    </section>
+
+    <section class="panel observe-only">
       <h2>表示方式</h2>
       <div class="viewswitch" id="viewswitch">
         <button data-view="2d" class="on">2D 地図</button>
@@ -103,12 +112,12 @@
       </details>
     </section>
 
-    <section class="panel">
+    <section class="panel observe-only">
       <h2>凡例</h2>
       <div id="legend" class="legend"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel observe-only">
       <h2>この世界の統計</h2>
       <div id="stats" class="stats"></div>
     </section>

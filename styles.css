@@ -335,3 +335,8 @@ button.mini.wide { width: 100%; padding: 7px; }
 /* 指の端末にだけ出す設定 */
 .touch-only { display: none; }
 body.touch .touch-only { display: revert; }
+
+/* ---- 観察モードとゲームモード ---- */
+.mode-note { margin: 9px 0 0; }
+body.game-mode .observe-only { display: none; }
+#modeswitch { grid-template-columns: repeat(2, 1fr); }
