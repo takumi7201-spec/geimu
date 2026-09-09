@@ -340,3 +340,14 @@ body.touch .touch-only { display: revert; }
 .mode-note { margin: 9px 0 0; }
 body.game-mode .observe-only { display: none; }
 #modeswitch { grid-template-columns: repeat(2, 1fr); }
+
+@media (max-width: 860px) {
+  /* 縦持ちでは操作盤が絵の上に乗る。濃いと景色が読めないので、輪郭だけ残す */
+  #tbtns button { background: rgba(10,16,28,0.30); border-color: rgba(190,214,240,0.30); }
+  #tbtns button.on { background: rgba(120,190,255,0.42); }
+  #stick { background: rgba(10,16,28,0.22); border-color: rgba(190,214,240,0.24); }
+  #stick i { background: rgba(206,226,248,0.52); }
+  #tmove::after { border-color: rgba(190,214,240,0.14); }
+  /* 状態表示は二行。空を隠さないよう幅も詰める */
+  #vox-hud { right: 96px; line-height: 1.55; }
+}

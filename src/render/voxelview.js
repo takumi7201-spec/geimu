@@ -273,6 +273,22 @@ class MeshBuilder {
 
 // 面の向きごとの明るさ。太陽は北西の高い位置に固定する。
 // 天面を 1.0 に正規化してあるので、掛けても色が飽和しない
+/**
+ * 画面の縦横で、実効の視野が大きく変わる。垂直 52 度を固定すると
+ * スマホの縦持ち（390x844）では水平がわずか 25 度になり、
+ * 目の前を壁で塞がれているように感じる。細長い画面では水平のほうを保つ。
+ * ただし垂直を広げすぎると周辺が伸びるので 100 度で頭打ちにする。
+ */
+const FOV_V = (52 * Math.PI) / 180;
+const FOV_MIN_H = (58 * Math.PI) / 180;
+const FOV_MAX_V = (88 * Math.PI) / 180;   // これ以上広げると足元が画面の半分を占める
+function fovFor(aspect) {
+  if (!(aspect > 0)) return FOV_V;
+  const h = 2 * Math.atan(Math.tan(FOV_V / 2) * aspect);
+  if (h >= FOV_MIN_H) return FOV_V;
+  return Math.min(FOV_MAX_V, 2 * Math.atan(Math.tan(FOV_MIN_H / 2) / aspect));
+}
+
 /** 板の最小の幅（ブロック）。これ未満の種はこの大きさで描く */
 const SPRITE_MIN_W = 2.0;
 
@@ -911,7 +927,7 @@ export class VoxelRenderer {
     // 全体を隅まで収めると丘の遠景になって、木も生き物も粒になる。
     // 半分ほどが視野に入るあたりが、地形も足元も見える距離
     const span = s.total * 0.5;
-    this.cam.dist = span / (2 * Math.tan((52 * Math.PI / 180) / 2));
+    this.cam.dist = span / (2 * Math.tan(fovFor(this.canvas.width / this.canvas.height) / 2));
   }
 
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
@@ -993,7 +1009,7 @@ export class VoxelRenderer {
   _matrices() {
     const aspect = this.canvas.width / this.canvas.height;
     const far = Math.max(400, (this.scene ? this.scene.total : 400) * 2.2);
-    const proj = M.perspective((52 * Math.PI) / 180, aspect, 0.5, far);
+    const proj = M.perspective(fovFor(aspect), aspect, 0.5, far);
     const eye = this._eye();
     // 注視点へ向けるビュー行列（yaw/pitch から直接組む）
     const view = M.multiply(
@@ -1008,7 +1024,7 @@ export class VoxelRenderer {
     const s = this.scene;
     if (!s) return null;
     const aspect = this.canvas.width / this.canvas.height;
-    const f = Math.tan((52 * Math.PI) / 180 / 2);
+    const f = Math.tan(fovFor(aspect) / 2);
     const ndcX = (sx / this.canvas.width) * 2 - 1;
     const ndcY = 1 - (sy / this.canvas.height) * 2;
     const cy = Math.cos(this.cam.pitch), sy2 = Math.sin(this.cam.pitch);

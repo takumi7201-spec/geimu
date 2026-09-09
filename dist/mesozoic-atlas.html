@@ -354,6 +354,17 @@ body.touch .touch-only { display: revert; }
 body.game-mode .observe-only { display: none; }
 #modeswitch { grid-template-columns: repeat(2, 1fr); }
 
+@media (max-width: 860px) {
+  /* 縦持ちでは操作盤が絵の上に乗る。濃いと景色が読めないので、輪郭だけ残す */
+  #tbtns button { background: rgba(10,16,28,0.30); border-color: rgba(190,214,240,0.30); }
+  #tbtns button.on { background: rgba(120,190,255,0.42); }
+  #stick { background: rgba(10,16,28,0.22); border-color: rgba(190,214,240,0.24); }
+  #stick i { background: rgba(206,226,248,0.52); }
+  #tmove::after { border-color: rgba(190,214,240,0.14); }
+  /* 状態表示は二行。空を隠さないよう幅も詰める */
+  #vox-hud { right: 96px; line-height: 1.55; }
+}
+
 </style>
 </head>
 <body>
@@ -4910,6 +4921,22 @@ class MeshBuilder {
 
 // 面の向きごとの明るさ。太陽は北西の高い位置に固定する。
 // 天面を 1.0 に正規化してあるので、掛けても色が飽和しない
+/**
+ * 画面の縦横で、実効の視野が大きく変わる。垂直 52 度を固定すると
+ * スマホの縦持ち（390x844）では水平がわずか 25 度になり、
+ * 目の前を壁で塞がれているように感じる。細長い画面では水平のほうを保つ。
+ * ただし垂直を広げすぎると周辺が伸びるので 100 度で頭打ちにする。
+ */
+const FOV_V = (52 * Math.PI) / 180;
+const FOV_MIN_H = (58 * Math.PI) / 180;
+const FOV_MAX_V = (88 * Math.PI) / 180;   // これ以上広げると足元が画面の半分を占める
+function fovFor(aspect) {
+  if (!(aspect > 0)) return FOV_V;
+  const h = 2 * Math.atan(Math.tan(FOV_V / 2) * aspect);
+  if (h >= FOV_MIN_H) return FOV_V;
+  return Math.min(FOV_MAX_V, 2 * Math.atan(Math.tan(FOV_MIN_H / 2) / aspect));
+}
+
 /** 板の最小の幅（ブロック）。これ未満の種はこの大きさで描く */
 const SPRITE_MIN_W = 2.0;
 
@@ -5548,7 +5575,7 @@ class VoxelRenderer {
     // 全体を隅まで収めると丘の遠景になって、木も生き物も粒になる。
     // 半分ほどが視野に入るあたりが、地形も足元も見える距離
     const span = s.total * 0.5;
-    this.cam.dist = span / (2 * Math.tan((52 * Math.PI / 180) / 2));
+    this.cam.dist = span / (2 * Math.tan(fovFor(this.canvas.width / this.canvas.height) / 2));
   }
 
   /** 絵を差し替えたときに呼ぶ。地形は変わらないので板だけ作り直す */
@@ -5630,7 +5657,7 @@ class VoxelRenderer {
   _matrices() {
     const aspect = this.canvas.width / this.canvas.height;
     const far = Math.max(400, (this.scene ? this.scene.total : 400) * 2.2);
-    const proj = M.perspective((52 * Math.PI) / 180, aspect, 0.5, far);
+    const proj = M.perspective(fovFor(aspect), aspect, 0.5, far);
     const eye = this._eye();
     // 注視点へ向けるビュー行列（yaw/pitch から直接組む）
     const view = M.multiply(
@@ -5645,7 +5672,7 @@ class VoxelRenderer {
     const s = this.scene;
     if (!s) return null;
     const aspect = this.canvas.width / this.canvas.height;
-    const f = Math.tan((52 * Math.PI) / 180 / 2);
+    const f = Math.tan(fovFor(aspect) / 2);
     const ndcX = (sx / this.canvas.width) * 2 - 1;
     const ndcY = 1 - (sy / this.canvas.height) * 2;
     const cy = Math.cos(this.cam.pitch), sy2 = Math.sin(this.cam.pitch);
@@ -7092,7 +7119,13 @@ function updateVoxHud() {
   const col = sampleColumn(s, st.x, st.z);
   const near = faunaNear(s, st.x, st.z, 70)[0];
   const mode = st.flying ? '飛行' : st.submerged ? '潜水' : st.inWater ? '遊泳' : st.onGround ? '徒歩' : '落下';
-  hud.innerHTML =
+  // 縦持ちの画面では、上に三行も置くと空が隠れる。指の端末では二行に畳む
+  hud.innerHTML = IS_TOUCH
+    ? `<b>${col.biomeName}</b>　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(0)}℃　${mode} ${(st.speed * VOX_M).toFixed(0)}m/s\n`
+      + (state.watch
+        ? `<b>${state.watch.name}</b> を追跡中（${Math.round(Math.hypot(state.watch.x - st.x, state.watch.z - st.z) * VOX_M)}m・${s.fauna.indexOf(state.watch) + 1}/${s.fauna.length}）`
+        : near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）` : '')
+    :
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
     `${mode}　${(st.speed * VOX_M).toFixed(0)} m/s　目線 ${Math.round(st.eyeM).toLocaleString()}m\n` +
     (state.watch

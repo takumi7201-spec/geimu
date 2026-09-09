@@ -193,7 +193,9 @@ async function testPhone(url) {
     if (!(await b.evaluate(`document.getElementById('sidebar').classList.contains('collapsed')`))) ng('探索に入っても設定が畳まれない');
     else ok('探索に入ると設定が畳まれて全画面になる');
 
-    const speed = () => b.evaluate(`document.getElementById('vox-hud').textContent.split('\\n')[1]`);
+    // 行の並びは画面の広さで変わる（狭い画面では二行に畳む）。
+    // 何行目かではなく、単位で拾う
+    const speed = () => b.evaluate(`document.getElementById('vox-hud').textContent`);
 
     // 定位置でなく、左下のどこを触っても歩けること。
     // 倒す向きは変えて試す ―― 降りた先が崖や幹に面していることがあり、

@@ -391,7 +391,13 @@ function updateVoxHud() {
   const col = sampleColumn(s, st.x, st.z);
   const near = faunaNear(s, st.x, st.z, 70)[0];
   const mode = st.flying ? '飛行' : st.submerged ? '潜水' : st.inWater ? '遊泳' : st.onGround ? '徒歩' : '落下';
-  hud.innerHTML =
+  // 縦持ちの画面では、上に三行も置くと空が隠れる。指の端末では二行に畳む
+  hud.innerHTML = IS_TOUCH
+    ? `<b>${col.biomeName}</b>　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(0)}℃　${mode} ${(st.speed * VOX_M).toFixed(0)}m/s\n`
+      + (state.watch
+        ? `<b>${state.watch.name}</b> を追跡中（${Math.round(Math.hypot(state.watch.x - st.x, state.watch.z - st.z) * VOX_M)}m・${s.fauna.indexOf(state.watch) + 1}/${s.fauna.length}）`
+        : near ? `近くに <b>${near.name}</b>（${Math.round(near.dist * VOX_M)}m）` : '')
+    :
     `<b>${col.biomeName}</b>　${col.blockName}　${Math.round(col.elevM).toLocaleString()}m　${col.tempC.toFixed(1)}℃\n` +
     `${mode}　${(st.speed * VOX_M).toFixed(0)} m/s　目線 ${Math.round(st.eyeM).toLocaleString()}m\n` +
     (state.watch
